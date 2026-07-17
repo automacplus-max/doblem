@@ -3,7 +3,7 @@ import {
   Menu, X, ShoppingBag, Star, ChevronDown, Plus, Minus,
   Trash2, Pencil, Check, Lock, LogOut, Eye, EyeOff, ArrowLeft, Upload, Search, SlidersHorizontal, Tag, Moon, Sun,
   Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle, ArrowUp, ArrowDown, Copy, Flame,
-  Layers, Building2, Tags, ShieldCheck, RotateCcw, BarChart3, TrendingUp, BadgeCheck, Sparkles
+  Layers, Building2, Tags, ShieldCheck, RotateCcw, BarChart3, TrendingUp, BadgeCheck, Sparkles, Users, Clock, EyeOff as EyeSlash
 } from "lucide-react";
 import { storage } from "./lib/storage.js";
 import { LOGO_DARK_MARK, LOGO_LIGHT_MARK } from "./logoAssets.js";
@@ -458,6 +458,17 @@ const stockBadgeLabel = (stock) => {
   if (stock > 0 && stock <= 5) return "QUEDAN POCOS";
   return null;
 };
+const COUNTRY_NAMES = {
+  CL: "Chile", AR: "Argentina", UY: "Uruguay", MX: "México", US: "Estados Unidos", CA: "Canadá",
+  BR: "Brasil", ES: "España", CO: "Colombia", PE: "Perú", EC: "Ecuador", BO: "Bolivia",
+  PY: "Paraguay", VE: "Venezuela", XX: "Desconocido",
+};
+const formatDuration = (totalSec) => {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}m ${String(s).padStart(2, "0")}s`;
+};
+
 const DEFAULT_TAGS = [
   { id: "trending", label: "Trending" },
   { id: "new-season", label: "New Season" },
@@ -1010,6 +1021,14 @@ const ProductPage = ({ product, currency, addToCart, wishlist, toggleWish, t, pu
   const canAdd = !missingRequired && allChosen && stock > 0;
   const inWish = wishlist.includes(product.id);
 
+  // If the admin linked a photo to a specific attribute value (e.g. a black
+  // hoodie's image tagged Color=Negro), show that photo once the shopper
+  // picks that value — otherwise fall back to the first image.
+  const linkedImageIndex = (product.images || []).findIndex(
+    (im) => im.linkedAttr && selected[im.linkedAttr.attrId] === im.linkedAttr.value
+  );
+  const galleryImageIndex = linkedImageIndex >= 0 ? linkedImageIndex : 0;
+
   const handleAdd = () => {
     if (!canAdd) return;
     addToCart({ ...product, selected, qty: Math.min(qty, stock) });
@@ -1020,7 +1039,7 @@ const ProductPage = ({ product, currency, addToCart, wishlist, toggleWish, t, pu
   return (
     <section className="ldm-product">
       <div className="ldm-product-gallery">
-        <Plate product={product} tone={product.tone} className="ldm-product-plate" eager />
+        <Plate product={product} tone={product.tone} className="ldm-product-plate" imageIndex={galleryImageIndex} eager />
         <button className={`ldm-wish-btn ldm-wish-btn--overlay ${inWish ? "is-active" : ""}`} onClick={() => toggleWish(product.id)} aria-label="Toggle favorite">
           <Star size={18} strokeWidth={1.4} fill={inWish ? "currentColor" : "none"} />
         </button>
@@ -1558,10 +1577,11 @@ function normalizeProduct(p) {
 const VARIANT_ICONS = ["jacket", "denim", "knit", "boot", "bag", "hat", "belt", "dress"];
 
 /* small preview tile used inside the admin product form's image list */
-const AdminImageThumb = ({ image, onRemove }) => {
+const AdminImageThumb = ({ image, attributes, onRemove, onMove, isFirst, isLast, onLink }) => {
   const src = useResolvedImageSrc(image);
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [src]);
+  const linkValue = image.linkedAttr ? `${image.linkedAttr.attrId}::${image.linkedAttr.value}` : "";
   return (
     <div className="ldm-admin-image">
       {src && !failed ? (
@@ -1571,7 +1591,32 @@ const AdminImageThumb = ({ image, onRemove }) => {
           {failed ? "No se pudo cargar" : image.stored ? "Cargando…" : "Sin vista previa"}
         </div>
       )}
-      <button onClick={onRemove} aria-label="Eliminar imagen"><Trash2 size={13} strokeWidth={1.4} /></button>
+      <div className="ldm-admin-image-actions">
+        <button onClick={() => onMove(-1)} disabled={isFirst} aria-label="Mover antes"><ArrowUp size={12} strokeWidth={1.6} /></button>
+        <button onClick={() => onMove(1)} disabled={isLast} aria-label="Mover después"><ArrowDown size={12} strokeWidth={1.6} /></button>
+        <button onClick={onRemove} aria-label="Eliminar imagen"><Trash2 size={12} strokeWidth={1.6} /></button>
+      </div>
+      {attributes.length > 0 && (
+        <select
+          className="ldm-admin-image-link"
+          value={linkValue}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (!v) { onLink(null); return; }
+            const [attrId, value] = v.split("::");
+            onLink({ attrId, value });
+          }}
+        >
+          <option value="">Vincular a variante…</option>
+          {attributes.map((a) => (
+            <optgroup key={a.id} label={a.name || "(sin nombre)"}>
+              {a.values.map((val) => (
+                <option key={val} value={`${a.id}::${val}`}>{a.name}: {val}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      )}
     </div>
   );
 };
@@ -1642,6 +1687,20 @@ const ProductForm = ({ product, categories, brands, tags, onSave, onCancel }) =>
       return { ...d, images: d.images.filter((im) => im.id !== id) };
     });
   };
+
+  const moveImage = (id, dir) => setDraft((d) => {
+    const idx = d.images.findIndex((im) => im.id === id);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= d.images.length) return d;
+    const arr = [...d.images];
+    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    return { ...d, images: arr };
+  });
+
+  const setImageLink = (id, linkedAttr) => setDraft((d) => ({
+    ...d,
+    images: d.images.map((im) => (im.id === id ? { ...im, linkedAttr: linkedAttr || undefined } : im)),
+  }));
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -1730,8 +1789,17 @@ const ProductForm = ({ product, categories, brands, tags, onSave, onCancel }) =>
       <div className="ldm-admin-subsection">
         <h3>Imágenes</h3>
         <div className="ldm-admin-images">
-          {draft.images.map((im) => (
-            <AdminImageThumb key={im.id} image={im} onRemove={() => removeImage(im.id)} />
+          {draft.images.map((im, idx) => (
+            <AdminImageThumb
+              key={im.id}
+              image={im}
+              attributes={attributes}
+              onRemove={() => removeImage(im.id)}
+              onMove={(dir) => moveImage(im.id, dir)}
+              onLink={(linkedAttr) => setImageLink(im.id, linkedAttr)}
+              isFirst={idx === 0}
+              isLast={idx === draft.images.length - 1}
+            />
           ))}
         </div>
         <div className="ldm-admin-image-add">
@@ -1825,18 +1893,18 @@ const AttrValueAdder = ({ onAdd }) => {
   );
 };
 
-const ProductTable = ({ products, categories, onEdit, onDelete, onToggleVisible, onDuplicate, onAdd }) => (
+const ProductTable = ({ products, categories, onEdit, onDelete, onToggleVisible, onDuplicate, onAdd, readOnly }) => (
   <div className="ldm-admin-table-wrap">
     <div className="ldm-admin-table-head">
       <h2>Productos ({products.length})</h2>
-      <button className="ldm-btn ldm-btn--solid" onClick={onAdd}><Plus size={13} strokeWidth={1.6} /> Añadir Producto</button>
+      {!readOnly && <button className="ldm-btn ldm-btn--solid" onClick={onAdd}><Plus size={13} strokeWidth={1.6} /> Añadir Producto</button>}
     </div>
     <div className="ldm-admin-grid">
       {products.map((p) => (
         <div className="ldm-admin-card" key={p.id}>
           <div className="ldm-admin-card-media">
             <Plate product={p} tone={p.tone} className="ldm-admin-card-plate" />
-            <button className={`ldm-toggle ldm-admin-card-toggle ${p.visible ? "is-on" : ""}`} onClick={() => onToggleVisible(p.id)} aria-label="Alternar visibilidad">
+            <button className={`ldm-toggle ldm-admin-card-toggle ${p.visible ? "is-on" : ""}`} onClick={() => onToggleVisible(p.id)} aria-label="Alternar visibilidad" disabled={readOnly}>
               <span />
             </button>
           </div>
@@ -1848,11 +1916,13 @@ const ProductTable = ({ products, categories, onEdit, onDelete, onToggleVisible,
               <span className="ldm-admin-card-stock">Stock: {fmtStock(p.variants)}</span>
             </div>
           </div>
-          <div className="ldm-admin-card-actions">
-            <button onClick={() => onEdit(p)}><Pencil size={13} strokeWidth={1.4} /> Editar</button>
-            <button onClick={() => onDuplicate(p.id)}><Copy size={13} strokeWidth={1.4} /> Duplicar</button>
-            <button onClick={() => onDelete(p.id)}><Trash2 size={13} strokeWidth={1.4} /> Eliminar</button>
-          </div>
+          {!readOnly && (
+            <div className="ldm-admin-card-actions">
+              <button onClick={() => onEdit(p)}><Pencil size={13} strokeWidth={1.4} /> Editar</button>
+              <button onClick={() => onDuplicate(p.id)}><Copy size={13} strokeWidth={1.4} /> Duplicar</button>
+              <button onClick={() => onDelete(p.id)}><Trash2 size={13} strokeWidth={1.4} /> Eliminar</button>
+            </div>
+          )}
         </div>
       ))}
       {products.length === 0 && <p className="ldm-empty-note">Aún no hay productos.</p>}
@@ -1860,7 +1930,7 @@ const ProductTable = ({ products, categories, onEdit, onDelete, onToggleVisible,
   </div>
 );
 
-const CategoryManager = ({ categories, setCategories }) => {
+const CategoryManager = ({ categories, setCategories, readOnly }) => {
   const [newCat, setNewCat] = useState("");
   const [subDrafts, setSubDrafts] = useState({});
 
@@ -1890,31 +1960,39 @@ const CategoryManager = ({ categories, setCategories }) => {
   return (
     <div className="ldm-admin-table-wrap">
       <div className="ldm-admin-table-head"><h2>Categorías</h2></div>
-      <div className="ldm-admin-add-row">
-        <input placeholder="Nueva categoría" value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addCategory(); }} />
-        <button className="ldm-btn ldm-btn--solid" onClick={addCategory}><Plus size={13} strokeWidth={1.6} /> Añadir Categoría</button>
-      </div>
+      {!readOnly && (
+        <div className="ldm-admin-add-row">
+          <input placeholder="Nueva categoría" value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addCategory(); }} />
+          <button className="ldm-btn ldm-btn--solid" onClick={addCategory}><Plus size={13} strokeWidth={1.6} /> Añadir Categoría</button>
+        </div>
+      )}
       <div className="ldm-admin-cats">
         {categories.map((cat) => (
           <div key={cat.id} className="ldm-admin-cat-block">
             <div className="ldm-admin-cat-head">
               <strong>{cat.label}</strong>
-              <button onClick={() => deleteCategory(cat.id)} aria-label="Eliminar categoría"><Trash2 size={13} strokeWidth={1.4} /></button>
+              {!readOnly && <button onClick={() => deleteCategory(cat.id)} aria-label="Eliminar categoría"><Trash2 size={13} strokeWidth={1.4} /></button>}
             </div>
             <div className="ldm-admin-subs">
               {cat.subcategories.map((s, si) => (
                 <span key={s} className="ldm-admin-sub-tag">
                   {s}
-                  <button onClick={() => moveSub(cat.id, si, -1)} disabled={si === 0} aria-label="Mover antes"><ArrowUp size={11} strokeWidth={1.6} /></button>
-                  <button onClick={() => moveSub(cat.id, si, 1)} disabled={si === cat.subcategories.length - 1} aria-label="Mover después"><ArrowDown size={11} strokeWidth={1.6} /></button>
-                  <button onClick={() => deleteSub(cat.id, s)}><X size={11} strokeWidth={1.6} /></button>
+                  {!readOnly && (
+                    <>
+                      <button onClick={() => moveSub(cat.id, si, -1)} disabled={si === 0} aria-label="Mover antes"><ArrowUp size={11} strokeWidth={1.6} /></button>
+                      <button onClick={() => moveSub(cat.id, si, 1)} disabled={si === cat.subcategories.length - 1} aria-label="Mover después"><ArrowDown size={11} strokeWidth={1.6} /></button>
+                      <button onClick={() => deleteSub(cat.id, s)}><X size={11} strokeWidth={1.6} /></button>
+                    </>
+                  )}
                 </span>
               ))}
             </div>
-            <div className="ldm-admin-add-row ldm-admin-add-row--sm">
-              <input placeholder="Nueva subcategoría" value={subDrafts[cat.id] || ""} onChange={(e) => setSubDrafts((d) => ({ ...d, [cat.id]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") addSub(cat.id); }} />
-              <button className="ldm-btn ldm-btn--outline" onClick={() => addSub(cat.id)}>Añadir</button>
-            </div>
+            {!readOnly && (
+              <div className="ldm-admin-add-row ldm-admin-add-row--sm">
+                <input placeholder="Nueva subcategoría" value={subDrafts[cat.id] || ""} onChange={(e) => setSubDrafts((d) => ({ ...d, [cat.id]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") addSub(cat.id); }} />
+                <button className="ldm-btn ldm-btn--outline" onClick={() => addSub(cat.id)}>Añadir</button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -1924,7 +2002,7 @@ const CategoryManager = ({ categories, setCategories }) => {
 
 const MAX_TRENDING_BRANDS = 3;
 
-const BrandManager = ({ brands, setBrands }) => {
+const BrandManager = ({ brands, setBrands, readOnly }) => {
   const [newBrand, setNewBrand] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editValue, setEditValue] = useState("");
@@ -1960,16 +2038,25 @@ const BrandManager = ({ brands, setBrands }) => {
     <div className="ldm-admin-table-wrap">
       <div className="ldm-admin-table-head">
         <h2>Marcas</h2>
-        <button className="ldm-btn ldm-btn--outline" onClick={sortAlpha}>Ordenar A-Z</button>
+        {!readOnly && <button className="ldm-btn ldm-btn--outline" onClick={sortAlpha}>Ordenar A-Z</button>}
       </div>
-      <div className="ldm-admin-add-row">
-        <input placeholder="Nueva marca" value={newBrand} onChange={(e) => setNewBrand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addBrand(); }} />
-        <button className="ldm-btn ldm-btn--solid" onClick={addBrand}><Plus size={13} strokeWidth={1.6} /> Añadir Marca</button>
-      </div>
-      <p className="ldm-admin-hint"><Flame size={12} strokeWidth={1.8} /> Marcá hasta {MAX_TRENDING_BRANDS} marcas como tendencia ({trendingCount}/{MAX_TRENDING_BRANDS})</p>
+      {!readOnly && (
+        <>
+          <div className="ldm-admin-add-row">
+            <input placeholder="Nueva marca" value={newBrand} onChange={(e) => setNewBrand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addBrand(); }} />
+            <button className="ldm-btn ldm-btn--solid" onClick={addBrand}><Plus size={13} strokeWidth={1.6} /> Añadir Marca</button>
+          </div>
+          <p className="ldm-admin-hint"><Flame size={12} strokeWidth={1.8} /> Marcá hasta {MAX_TRENDING_BRANDS} marcas como tendencia ({trendingCount}/{MAX_TRENDING_BRANDS})</p>
+        </>
+      )}
       <div className="ldm-admin-subs">
         {brands.map((b, bi) => (
-          editingId === b.id ? (
+          readOnly ? (
+            <span key={b.id} className={`ldm-admin-sub-tag ${b.trending ? "is-trending" : ""}`}>
+              {b.trending && <Flame size={12} strokeWidth={1.8} fill="currentColor" className="ldm-trending-toggle" />}
+              {b.label}
+            </span>
+          ) : editingId === b.id ? (
             <span key={b.id} className="ldm-admin-sub-tag">
               <input className="ldm-admin-tag-edit-input" value={editValue} onChange={(e) => setEditValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); }} autoFocus />
               <button onClick={saveEdit}><Check size={11} strokeWidth={1.8} /></button>
@@ -1997,7 +2084,7 @@ const BrandManager = ({ brands, setBrands }) => {
   );
 };
 
-const TagManager = ({ tags, setTags }) => {
+const TagManager = ({ tags, setTags, readOnly }) => {
   const [newTag, setNewTag] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editValue, setEditValue] = useState("");
@@ -2016,13 +2103,17 @@ const TagManager = ({ tags, setTags }) => {
   return (
     <div className="ldm-admin-table-wrap">
       <div className="ldm-admin-table-head"><h2>Etiquetas</h2></div>
-      <div className="ldm-admin-add-row">
-        <input placeholder="Nueva etiqueta" value={newTag} onChange={(e) => setNewTag(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addTag(); }} />
-        <button className="ldm-btn ldm-btn--solid" onClick={addTag}><Plus size={13} strokeWidth={1.6} /> Añadir Etiqueta</button>
-      </div>
+      {!readOnly && (
+        <div className="ldm-admin-add-row">
+          <input placeholder="Nueva etiqueta" value={newTag} onChange={(e) => setNewTag(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addTag(); }} />
+          <button className="ldm-btn ldm-btn--solid" onClick={addTag}><Plus size={13} strokeWidth={1.6} /> Añadir Etiqueta</button>
+        </div>
+      )}
       <div className="ldm-admin-subs">
         {tags.map((tg) => (
-          editingId === tg.id ? (
+          readOnly ? (
+            <span key={tg.id} className="ldm-admin-sub-tag">{tg.label}</span>
+          ) : editingId === tg.id ? (
             <span key={tg.id} className="ldm-admin-sub-tag">
               <input
                 className="ldm-admin-tag-edit-input"
@@ -2070,33 +2161,37 @@ const ORDER_SORTS = [
   { id: "cheap", label: "Más baratos" },
 ];
 
-const OrderCard = ({ order, currency, onTogglePin, onSetColor, onSetStatus, onComplete, onReopen, onDelete, isCompleted }) => {
+const OrderCard = ({ order, currency, onTogglePin, onSetColor, onSetStatus, onComplete, onReopen, onDelete, isCompleted, readOnly }) => {
   const [draft, setDraft] = useState("");
   const items = order.items || [];
   return (
     <div className={`ldm-order-card ${order.color ? `ldm-order-card--${order.color}` : ""} ${order.pinned ? "is-pinned" : ""}`}>
       <div className="ldm-order-card-top">
         <span className="ldm-order-number">Pedido #{String(order.number).padStart(3, "0")}</span>
-        <button className={`ldm-order-pin ${order.pinned ? "is-active" : ""}`} onClick={() => onTogglePin(order.id)} aria-label="Anclar pedido" title="Anclar pedido">
-          <Pin size={14} strokeWidth={1.6} fill={order.pinned ? "currentColor" : "none"} />
-        </button>
+        {!readOnly && (
+          <button className={`ldm-order-pin ${order.pinned ? "is-active" : ""}`} onClick={() => onTogglePin(order.id)} aria-label="Anclar pedido" title="Anclar pedido">
+            <Pin size={14} strokeWidth={1.6} fill={order.pinned ? "currentColor" : "none"} />
+          </button>
+        )}
       </div>
 
       <h3 className="ldm-order-title">{order.customer?.fullName}</h3>
       <span className="ldm-order-date">{new Date(order.date).toLocaleString("es-CL", { dateStyle: "medium", timeStyle: "short" })}</span>
 
-      <div className="ldm-order-colors">
-        {ORDER_COLORS.map((c) => (
-          <button
-            key={c.id}
-            className={`ldm-color-dot ${order.color === c.id ? "is-selected" : ""}`}
-            style={{ background: c.hex }}
-            onClick={() => onSetColor(order.id, c.id)}
-            aria-label={c.label}
-            title={c.label}
-          />
-        ))}
-      </div>
+      {!readOnly && (
+        <div className="ldm-order-colors">
+          {ORDER_COLORS.map((c) => (
+            <button
+              key={c.id}
+              className={`ldm-color-dot ${order.color === c.id ? "is-selected" : ""}`}
+              style={{ background: c.hex }}
+              onClick={() => onSetColor(order.id, c.id)}
+              aria-label={c.label}
+              title={c.label}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="ldm-order-rows">
         <div className="ldm-order-row"><Mail size={12} strokeWidth={1.6} /> <span>{order.customer?.email || "—"}</span></div>
@@ -2116,42 +2211,48 @@ const OrderCard = ({ order, currency, onTogglePin, onSetColor, onSetStatus, onCo
 
       <div className="ldm-order-status">
         <span className="ldm-status-chip">{order.status || "Pedido recibido"}</span>
-        <div className="ldm-status-buttons">
-          {STATUS_PRESETS.map((s) => (
-            <button key={s} className={order.status === s ? "is-active" : ""} onClick={() => onSetStatus(order.id, s)}>{s}</button>
-          ))}
-        </div>
-        <div className="ldm-status-input-row">
-          <input placeholder="Actualización personalizada…" value={draft} onChange={(e) => setDraft(e.target.value)} />
-          <button
-            onClick={() => { if (draft.trim()) { onSetStatus(order.id, draft.trim()); setDraft(""); } }}
-            aria-label="Enviar actualización"
-            title="Enviar actualización"
-          >
-            <Send size={13} strokeWidth={1.8} />
-          </button>
-        </div>
+        {!readOnly && (
+          <>
+            <div className="ldm-status-buttons">
+              {STATUS_PRESETS.map((s) => (
+                <button key={s} className={order.status === s ? "is-active" : ""} onClick={() => onSetStatus(order.id, s)}>{s}</button>
+              ))}
+            </div>
+            <div className="ldm-status-input-row">
+              <input placeholder="Actualización personalizada…" value={draft} onChange={(e) => setDraft(e.target.value)} />
+              <button
+                onClick={() => { if (draft.trim()) { onSetStatus(order.id, draft.trim()); setDraft(""); } }}
+                aria-label="Enviar actualización"
+                title="Enviar actualización"
+              >
+                <Send size={13} strokeWidth={1.8} />
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
-      <div className="ldm-order-actions">
-        {isCompleted ? (
-          <button className="ldm-order-action-btn" onClick={() => onReopen(order.id)}>
-            <ArrowLeft size={13} strokeWidth={1.6} /> Reabrir Pedido
+      {!readOnly && (
+        <div className="ldm-order-actions">
+          {isCompleted ? (
+            <button className="ldm-order-action-btn" onClick={() => onReopen(order.id)}>
+              <ArrowLeft size={13} strokeWidth={1.6} /> Reabrir Pedido
+            </button>
+          ) : (
+            <button className="ldm-order-action-btn ldm-order-action-btn--confirm" onClick={() => onComplete(order.id)}>
+              <Check size={13} strokeWidth={1.8} /> Confirmar Pedido
+            </button>
+          )}
+          <button className="ldm-order-action-btn ldm-order-action-btn--delete" onClick={() => onDelete(order.id)}>
+            <Trash2 size={13} strokeWidth={1.6} /> Eliminar Pedido
           </button>
-        ) : (
-          <button className="ldm-order-action-btn ldm-order-action-btn--confirm" onClick={() => onComplete(order.id)}>
-            <Check size={13} strokeWidth={1.8} /> Confirmar Pedido
-          </button>
-        )}
-        <button className="ldm-order-action-btn ldm-order-action-btn--delete" onClick={() => onDelete(order.id)}>
-          <Trash2 size={13} strokeWidth={1.6} /> Eliminar Pedido
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 };
 
-const OrderManager = ({ orders, setOrders, currency }) => {
+const OrderManager = ({ orders, setOrders, currency, readOnly }) => {
   const [sort, setSort] = useState("newest");
   const [subTab, setSubTab] = useState("pending");
   const [query, setQuery] = useState("");
@@ -2237,6 +2338,7 @@ const OrderManager = ({ orders, setOrders, currency }) => {
             onReopen={reopenOrder}
             onDelete={deleteOrder}
             isCompleted={subTab === "completed"}
+            readOnly={readOnly}
           />
         ))}
         {sorted.length === 0 && (
@@ -2316,12 +2418,55 @@ const StatsManager = ({ events, products, categories, orders, currency }) => {
       return s + (Number(o.subtotal) || 0) / rate;
     }, 0);
 
-    return { totalViews: views.length, totalCarts: carts.length, perProduct, categoryRows, maxCategoryViews, dailySeries, maxDaily, revenueUsd };
+    // Visits, time on site, country — one session_start per browser tab,
+    // country read server-side from Vercel's IP-geo header (see api/geo.js).
+    // durationSec comes from session_end, logged when the tab is backgrounded;
+    // a session can log more than one (leave-and-return), so we take the max.
+    const totalPageviews = events.filter((e) => e.type === "pageview").length;
+    const sessionStarts = events.filter((e) => e.type === "session_start");
+    const uniqueSessionIds = new Set(sessionStarts.map((e) => e.meta?.sessionId).filter(Boolean));
+    const totalVisits = uniqueSessionIds.size;
+
+    const durationBySession = events.filter((e) => e.type === "session_end").reduce((m, e) => {
+      const sid = e.meta?.sessionId;
+      const d = Number(e.meta?.durationSec) || 0;
+      if (!sid) return m;
+      m[sid] = Math.max(m[sid] || 0, d);
+      return m;
+    }, {});
+    const durationValues = Object.values(durationBySession);
+    const avgDurationSec = durationValues.length > 0 ? Math.round(durationValues.reduce((s, n) => s + n, 0) / durationValues.length) : 0;
+
+    // Dedupe by sessionId first — a session can log session_start more than
+    // once (e.g. React re-running an effect), which would otherwise inflate
+    // a single visit into multiple country counts.
+    const countryBySession = sessionStarts.reduce((m, e) => {
+      const sid = e.meta?.sessionId;
+      if (!sid || m[sid]) return m;
+      m[sid] = e.meta?.country || "XX";
+      return m;
+    }, {});
+    const countryCounts = Object.values(countryBySession).reduce((m, c) => {
+      m[c] = (m[c] || 0) + 1;
+      return m;
+    }, {});
+    const countryRows = Object.entries(countryCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([code, count]) => ({ code, label: COUNTRY_NAMES[code] || code, count, pct: totalVisits > 0 ? Math.round((count / totalVisits) * 100) : 0 }));
+    const maxCountryCount = Math.max(1, ...countryRows.map((r) => r.count));
+
+    return {
+      totalViews: views.length, totalCarts: carts.length, perProduct, categoryRows, maxCategoryViews, dailySeries, maxDaily, revenueUsd,
+      totalPageviews, totalVisits, avgDurationSec, countryRows, maxCountryCount,
+    };
   }, [events, products, categories, orders]);
 
   return (
     <div className="ldm-stats">
       <div className="ldm-stat-cards">
+        <StatCard icon={Users} label="Visitas a la tienda" value={stats.totalVisits.toLocaleString("es-CL")}
+          sub={`${stats.totalPageviews.toLocaleString("es-CL")} páginas vistas`} />
+        <StatCard icon={Clock} label="Tiempo promedio en el sitio" value={stats.avgDurationSec > 0 ? formatDuration(stats.avgDurationSec) : "—"} />
         <StatCard icon={Eye} label="Vistas de producto" value={stats.totalViews.toLocaleString("es-CL")} />
         <StatCard icon={ShoppingBag} label="Agregados al carrito" value={stats.totalCarts.toLocaleString("es-CL")}
           sub={stats.totalViews > 0 ? `${Math.round((stats.totalCarts / stats.totalViews) * 100)}% conversión` : undefined} />
@@ -2385,11 +2530,26 @@ const StatsManager = ({ events, products, categories, orders, currency }) => {
           </div>
         </div>
       )}
+
+      {stats.countryRows.length > 0 && (
+        <div className="ldm-admin-table-wrap">
+          <div className="ldm-admin-table-head"><h2>Visitantes por país</h2></div>
+          <div className="ldm-cat-bars">
+            {stats.countryRows.map((r) => (
+              <div className="ldm-cat-bar-row" key={r.code}>
+                <span className="ldm-cat-bar-label">{r.label}</span>
+                <div className="ldm-cat-bar-track"><div className="ldm-cat-bar-fill" style={{ width: `${(r.count / stats.maxCountryCount) * 100}%` }} /></div>
+                <span className="ldm-cat-bar-count">{r.count} ({r.pct}%)</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-const AdminDashboard = ({ products, setProducts, categories, setCategories, brands, setBrands, tags, setTags, orders, setOrders, events, currency, onLogout, onExit }) => {
+const AdminDashboard = ({ products, setProducts, categories, setCategories, brands, setBrands, tags, setTags, orders, setOrders, events, currency, setCurrency, theme, onToggleTheme, readOnly, onLogout, onExit }) => {
   const [tab, setTab] = useState("products");
   const [editing, setEditing] = useState(null);
 
@@ -2421,6 +2581,12 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
       <header className="ldm-admin-header">
         <button className="ldm-logo-mark" onClick={onExit}><LogoMark size="ldm-logomark--lg" /><span>LA DOBLE M Admin</span></button>
         <div className="ldm-admin-header-actions">
+          <select className="ldm-admin-currency-select" value={currency} onChange={(e) => setCurrency(e.target.value)} aria-label="Moneda">
+            {Object.entries(CURRENCIES).map(([code]) => <option key={code} value={code}>{code}</option>)}
+          </select>
+          <button className="ldm-nav-icon" onClick={onToggleTheme} aria-label={theme === "light" ? "Modo Oscuro" : "Modo Claro"}>
+            {theme === "light" ? <Moon size={16} strokeWidth={1.6} /> : <Sun size={16} strokeWidth={1.6} />}
+          </button>
           <button className="ldm-text-link" onClick={onExit}><ArrowLeft size={14} strokeWidth={1.4} /> Volver</button>
           <button className="ldm-text-link" onClick={onLogout}><LogOut size={14} strokeWidth={1.4} /> Cerrar Sesión</button>
         </div>
@@ -2435,8 +2601,11 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
           <button className={tab === "stats" ? "is-active" : ""} onClick={() => { setTab("stats"); setEditing(null); }}><BarChart3 size={15} strokeWidth={1.6} /> Estadísticas</button>
         </nav>
         <main className="ldm-admin-main">
+          {readOnly && (
+            <p className="ldm-readonly-banner"><EyeOff size={13} strokeWidth={1.6} /> Modo solo lectura — podés ver todo el panel, pero no se pueden guardar cambios con esta cuenta.</p>
+          )}
           {tab === "products" && (
-            editing ? (
+            editing && !readOnly ? (
               <ProductForm
                 product={editing === "new" ? emptyProduct(categories, brands) : editing}
                 categories={categories}
@@ -2446,13 +2615,13 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
                 onCancel={() => setEditing(null)}
               />
             ) : (
-              <ProductTable products={products} categories={categories} onEdit={setEditing} onDelete={deleteProduct} onToggleVisible={toggleVisible} onDuplicate={duplicateProduct} onAdd={() => setEditing("new")} />
+              <ProductTable products={products} categories={categories} onEdit={setEditing} onDelete={deleteProduct} onToggleVisible={toggleVisible} onDuplicate={duplicateProduct} onAdd={() => setEditing("new")} readOnly={readOnly} />
             )
           )}
-          {tab === "orders" && <OrderManager orders={orders} setOrders={setOrders} currency={currency} />}
-          {tab === "categories" && <CategoryManager categories={categories} setCategories={setCategories} />}
-          {tab === "brands" && <BrandManager brands={brands} setBrands={setBrands} />}
-          {tab === "tags" && <TagManager tags={tags} setTags={setTags} />}
+          {tab === "orders" && <OrderManager orders={orders} setOrders={setOrders} currency={currency} readOnly={readOnly} />}
+          {tab === "categories" && <CategoryManager categories={categories} setCategories={setCategories} readOnly={readOnly} />}
+          {tab === "brands" && <BrandManager brands={brands} setBrands={setBrands} readOnly={readOnly} />}
+          {tab === "tags" && <TagManager tags={tags} setTags={setTags} readOnly={readOnly} />}
           {tab === "stats" && <StatsManager events={events} products={products} categories={categories} orders={orders} currency={currency} />}
         </main>
       </div>
@@ -2471,7 +2640,13 @@ export default function App() {
   // once they log in it stays valid across reloads until they log out or it
   // expires. It's what authorizes writes to the admin-protected keys below.
   const [adminToken, setAdminToken, adminTokenReady] = useStoredState("ldm-admin-token", null, false);
-  const isAdmin = !!adminToken && Number(String(adminToken).split(".")[0]) > Date.now();
+  // Token shape: "<expiry>:<role>.<signature>" — the client only reads exp/role
+  // to decide what UI to show; the signature is re-checked server-side on
+  // every write, so a tampered role here can't actually unlock anything.
+  const [tokenExpStr, tokenRole] = String(adminToken || "").split(".")[0]?.split(":") || [];
+  const isAdmin = !!adminToken && Number(tokenExpStr) > Date.now();
+  const adminRole = tokenRole || "admin";
+  const isViewerRole = isAdmin && adminRole === "viewer";
 
   const [rawProducts, setProducts] = useStoredState("ldm-products", DEFAULT_PRODUCTS, true, adminToken);
   const products = useMemo(() => rawProducts.map(normalizeProduct), [rawProducts]);
@@ -2483,9 +2658,38 @@ export default function App() {
   // add-to-cart), same trust model as reviews/orders. Capped so the record
   // never grows unbounded. Read by the admin's Estadísticas tab.
   const [events, setEvents] = useStoredState("ldm-events", [], true);
-  const logEvent = useCallback((type, productId) => {
-    setEvents((e) => [...e, { type, productId, ts: Date.now() }].slice(-5000));
+  const logEvent = useCallback((type, productId, meta) => {
+    setEvents((e) => [...e, { type, productId, ts: Date.now(), ...(meta ? { meta } : {}) }].slice(-5000));
   }, [setEvents]);
+
+  // One id per browser tab/session — used to tie a "session_start" (with
+  // country, from Vercel's IP-geo header) to the "session_end" it logs when
+  // the tab goes to the background, so the admin can see roughly how long
+  // people spend on the site. Best-effort: a hard-closed tab loses its
+  // session_end, same limitation any beacon-less analytics setup has.
+  const sessionIdRef = useRef(null);
+  if (!sessionIdRef.current) {
+    sessionIdRef.current = (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  }
+  const sessionActiveSinceRef = useRef(Date.now());
+  useEffect(() => {
+    fetch("/api/geo").then((r) => r.json()).then((d) => {
+      logEvent("session_start", null, { sessionId: sessionIdRef.current, country: d.country || "XX" });
+    }).catch(() => {
+      logEvent("session_start", null, { sessionId: sessionIdRef.current, country: "XX" });
+    });
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        const durationSec = Math.round((Date.now() - sessionActiveSinceRef.current) / 1000);
+        logEvent("session_end", null, { sessionId: sessionIdRef.current, durationSec });
+      } else {
+        sessionActiveSinceRef.current = Date.now();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+    // eslint-disable-next-line
+  }, []);
 
   const t = STRINGS[lang] || STRINGS.es;
 
@@ -2565,8 +2769,11 @@ export default function App() {
   const navigateBrand = (brandId) => { setNavFilter({ category: null, sub: null, brand: brandId }); setPage("shop"); setMenuOpen(false); };
 
   // Records one "view" per product visited (keyed by id, not by object
-  // identity, so re-renders of the same product page don't double-count).
+  // identity, so re-renders of the same product page don't double-count),
+  // plus a generic "pageview" for every storefront navigation.
   useEffect(() => {
+    if (page === "admin") return;
+    logEvent("pageview", null, { sessionId: sessionIdRef.current, page });
     if (page === "product" && product?.id) logEvent("view", product.id);
     // eslint-disable-next-line
   }, [page, product?.id]);
@@ -2646,7 +2853,9 @@ export default function App() {
             tags={tags} setTags={setTags}
             orders={orders} setOrders={setOrders}
             events={events}
-            currency={currency}
+            currency={currency} setCurrency={setCurrency}
+            theme={theme} onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
+            readOnly={isViewerRole}
             onLogout={() => setAdminToken(null)}
             onExit={() => setPage("home")}
           />
@@ -2725,6 +2934,12 @@ export default function App() {
 /* ==================================== CSS ==================================== */
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* The browser's default 8px body margin was left over from never being
+   reset — invisible on the white background in light mode, but a very
+   visible pale strip around the whole page once the dark theme's near-black
+   background made the contrast obvious. */
+html, body { margin: 0; padding: 0; }
 
 .ldm-root {
   --ink: #101010; --bone: #ffffff; --panel: #f4f4f3; --panel-2: #e7e6e3; --panel-3: #d8d6d2;
@@ -3003,7 +3218,8 @@ const CSS = `
 
 .ldm-admin { min-height: 100vh; background: var(--surface); }
 .ldm-admin-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 32px; background: var(--bg); border-bottom: 1px solid var(--hairline); position: sticky; top: 0; z-index: 10; }
-.ldm-admin-header-actions { display: flex; gap: 24px; }
+.ldm-admin-header-actions { display: flex; align-items: center; gap: 18px; }
+.ldm-admin-currency-select { border: 1px solid var(--hairline); border-radius: 4px; padding: 6px 8px; font-size: 11.5px; color: var(--fg-dim); cursor: pointer; }
 .ldm-admin-header .ldm-logo-mark { border: none; padding: 0; }
 .ldm-admin-body { display: flex; min-height: calc(100vh - 65px); }
 .ldm-admin-tabs { width: 210px; flex-shrink: 0; background: var(--bg); border-right: 1px solid var(--hairline); padding: 18px 12px; display: flex; flex-direction: column; gap: 3px; }
@@ -3011,6 +3227,8 @@ const CSS = `
 .ldm-admin-tabs button:hover { background: var(--surface); color: var(--fg); }
 .ldm-admin-tabs button.is-active { color: var(--bg); background: var(--fg); font-weight: 500; }
 .ldm-admin-main { flex: 1; padding: 32px; max-width: 1240px; }
+.ldm-readonly-banner { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #8a5a1f; background: #fbead1; border: 1px solid #f0cd94; border-radius: 6px; padding: 10px 14px; margin-bottom: 20px; }
+.ldm-root[data-theme='dark'] .ldm-readonly-banner { color: #f0cd94; background: #3a2c14; border-color: #5c4620; }
 
 .ldm-admin-table-wrap { background: var(--bg); border: 1px solid var(--hairline); border-radius: 10px; padding: 26px 28px; box-shadow: 0 1px 3px rgba(16,16,16,0.04); }
 .ldm-admin-table-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }
@@ -3053,10 +3271,14 @@ const CSS = `
 .ldm-admin-subsection { margin-bottom: 26px; }
 .ldm-admin-subsection h3 { font-size: 13px; margin: 0 0 14px; }
 .ldm-admin-images { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.ldm-admin-image { position: relative; width: 70px; height: 88px; border-radius: 2px; overflow: hidden; border: 1px solid var(--hairline); }
-.ldm-admin-image img { width: 100%; height: 100%; object-fit: cover; }
-.ldm-admin-image-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 9px; line-height: 1.3; color: var(--fg-dim); padding: 4px; background: var(--surface); }
-.ldm-admin-image button { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.6); color: #fff; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.ldm-admin-image { position: relative; width: 116px; border-radius: 4px; overflow: hidden; border: 1px solid var(--hairline); display: flex; flex-direction: column; }
+.ldm-admin-image img { width: 100%; height: 116px; object-fit: cover; display: block; }
+.ldm-admin-image-placeholder { width: 100%; height: 116px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 9px; line-height: 1.3; color: var(--fg-dim); padding: 4px; background: var(--surface); }
+.ldm-admin-image-actions { display: flex; background: rgba(0,0,0,0.55); position: absolute; top: 4px; right: 4px; border-radius: 4px; overflow: hidden; }
+.ldm-admin-image-actions button { color: #fff; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; }
+.ldm-admin-image-actions button:hover { background: rgba(255,255,255,0.2); }
+.ldm-admin-image-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+.ldm-admin-image-link { border: none; border-top: 1px solid var(--hairline); font-size: 9.5px; padding: 5px 4px; background: var(--surface); color: var(--fg-dim); width: 100%; }
 .ldm-admin-image-add { display: flex; gap: 8px; flex-wrap: wrap; }
 .ldm-admin-image-add input { flex: 1; min-width: 160px; border: 1px solid var(--hairline); padding: 9px 12px; border-radius: 2px; font-size: 12.5px; }
 .ldm-admin-upload-error { font-size: 11.5px; color: #c0392b; margin: 8px 0 0; }
@@ -3095,7 +3317,7 @@ const CSS = `
 .ldm-trend-bar-col:hover .ldm-trend-bar { opacity: 1; }
 .ldm-trend-bar-col span { font-size: 9.5px; color: var(--fg-dim); white-space: nowrap; }
 .ldm-cat-bars { display: flex; flex-direction: column; gap: 10px; }
-.ldm-cat-bar-row { display: grid; grid-template-columns: 140px 1fr 32px; align-items: center; gap: 12px; }
+.ldm-cat-bar-row { display: grid; grid-template-columns: 140px 1fr 70px; align-items: center; gap: 12px; }
 .ldm-cat-bar-label { font-size: 12.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ldm-cat-bar-track { height: 8px; border-radius: 999px; background: var(--surface); overflow: hidden; }
 .ldm-cat-bar-fill { height: 100%; background: var(--fg); border-radius: 999px; }

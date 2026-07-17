@@ -16,18 +16,21 @@ export default async function handler(req, res) {
   }
 
   const { user, pass } = req.body || {};
-  const expectedUser = process.env.ADMIN_USER;
-  const expectedPass = process.env.ADMIN_PASSWORD;
-  if (!expectedUser || !expectedPass) {
+  const adminUser = process.env.ADMIN_USER;
+  const adminPass = process.env.ADMIN_PASSWORD;
+  const viewerUser = process.env.ADMIN_VIEWER_USER;
+  const viewerPass = process.env.ADMIN_VIEWER_PASSWORD;
+  if (!adminUser || !adminPass) {
     console.error("admin-login: faltan ADMIN_USER / ADMIN_PASSWORD en el servidor");
     return res.status(500).json({ error: "Admin login no está configurado." });
   }
 
-  const ok = safeEqual(user || "", expectedUser) && safeEqual(pass || "", expectedPass);
-  if (!ok) return res.status(401).json({ error: "Credenciales inválidas." });
+  const isAdmin = safeEqual(user || "", adminUser) && safeEqual(pass || "", adminPass);
+  const isViewer = !!viewerUser && !!viewerPass && safeEqual(user || "", viewerUser) && safeEqual(pass || "", viewerPass);
+  if (!isAdmin && !isViewer) return res.status(401).json({ error: "Credenciales inválidas." });
 
   try {
-    return res.status(200).json({ token: signSession() });
+    return res.status(200).json({ token: signSession(isAdmin ? "admin" : "viewer"), role: isAdmin ? "admin" : "viewer" });
   } catch (err) {
     console.error("admin-login error", err);
     return res.status(500).json({ error: "No se pudo iniciar sesión." });

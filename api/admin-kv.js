@@ -8,7 +8,11 @@ import { kvSet, kvDelete } from "./_lib/supabaseAdmin.js";
 export default async function handler(req, res) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-  if (!verifySession(token)) return res.status(401).json({ error: "No autorizado." });
+  const session = verifySession(token);
+  if (!session) return res.status(401).json({ error: "No autorizado." });
+  // The UI already hides every mutating control for the viewer role — this
+  // is the check that actually matters, in case someone crafts a request by hand.
+  if (session.role !== "admin") return res.status(403).json({ error: "Tu cuenta es de solo lectura." });
 
   try {
     if (req.method === "POST") {

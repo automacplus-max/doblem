@@ -8,20 +8,27 @@ function getSecret() {
   return secret;
 }
 
-export function signSession() {
+// Payload carries the role so the client can render the right UI, and the
+// server (admin-kv.js) independently re-checks it before any write — the
+// client-side check is just for UX, this one is what actually matters.
+export function signSession(role = "admin") {
   const exp = Date.now() + SESSION_TTL_MS;
-  const payload = String(exp);
+  const payload = `${exp}:${role}`;
   const sig = crypto.createHmac("sha256", getSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 
+// Returns { exp, role } on a valid, unexpired, correctly-signed token, or null.
 export function verifySession(token) {
-  if (!token || typeof token !== "string") return false;
+  if (!token || typeof token !== "string") return null;
   const [payload, sig] = token.split(".");
-  if (!payload || !sig) return false;
+  if (!payload || !sig) return null;
   const expected = crypto.createHmac("sha256", getSecret()).update(payload).digest("hex");
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  return Number(payload) > Date.now();
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const [expStr, role] = payload.split(":");
+  const exp = Number(expStr);
+  if (!exp || exp <= Date.now()) return null;
+  return { exp, role: role || "admin" };
 }

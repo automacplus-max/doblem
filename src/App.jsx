@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   Menu, X, ShoppingBag, Star, ChevronDown, Plus, Minus,
   Trash2, Pencil, Check, Lock, LogOut, Eye, EyeOff, ArrowLeft, Upload, Search, SlidersHorizontal, Tag, Moon, Sun,
-  Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle
+  Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle, ArrowUp, ArrowDown, Copy
 } from "lucide-react";
 import { storage } from "./lib/storage.js";
+import { LOGO_DARK_MARK, LOGO_LIGHT_MARK } from "./logoAssets.js";
 
 /* ========================================================================
    LA DOBLE M — minimalist luxury storefront
@@ -14,17 +15,13 @@ import { storage } from "./lib/storage.js";
    See src/lib/storage.js.
    ======================================================================== */
 
-// Brand mark. Left blank here — the component already falls back to a clean
-// hand-drawn SVG monogram (see LogoMark below) when no image is set. If you
-// have your own logo file, paste its base64 data URI into these two
-// constants (dark-background mark / light-background mark).
-const DEFAULT_LOGO_SRC_DARK_MARK = "";
-const DEFAULT_LOGO_SRC_LIGHT_MARK = "";
-// Kept for backward compatibility with any code path expecting a single default.
-const DEFAULT_LOGO_SRC = DEFAULT_LOGO_SRC_DARK_MARK;
+// Brand mark: black ink version shows on light backgrounds, white ink version
+// shows on dark backgrounds. See src/logoAssets.js.
+const DEFAULT_LOGO_SRC_DARK_MARK = LOGO_DARK_MARK;
+const DEFAULT_LOGO_SRC_LIGHT_MARK = LOGO_LIGHT_MARK;
 
-const LogoMark = ({ size = "", src, onClick, theme = "light" }) => {
-  const logo = src || (theme === "dark" ? DEFAULT_LOGO_SRC_LIGHT_MARK : DEFAULT_LOGO_SRC_DARK_MARK);
+const LogoMark = ({ size = "", onClick, theme = "light" }) => {
+  const logo = theme === "dark" ? DEFAULT_LOGO_SRC_LIGHT_MARK : DEFAULT_LOGO_SRC_DARK_MARK;
   return logo ? (
     <img src={logo} alt="La Doble M" className={`ldm-logomark ${size}`} onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined} />
   ) : (
@@ -35,8 +32,14 @@ const LogoMark = ({ size = "", src, onClick, theme = "light" }) => {
   );
 };
 
-/* ---------------------------- storage hook ----------------------------- */
-function useStoredState(key, initial, shared = false) {
+/* ---------------------------- storage hook -----------------------------
+   Keys in ADMIN_PROTECTED_KEYS can only be written through the signed
+   admin session (see api/admin-kv.js) — Supabase's RLS policy rejects
+   anon writes to them, so ordinary visitors only ever read these, never
+   write. See src/lib/storage.js for the admin-authenticated write path. */
+const ADMIN_PROTECTED_KEYS = new Set(["ldm-products", "ldm-categories", "ldm-brands", "ldm-tags"]);
+
+function useStoredState(key, initial, shared = false, adminToken = null) {
   const [state, setState] = useState(initial);
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -53,9 +56,15 @@ function useStoredState(key, initial, shared = false) {
   }, [key]);
   useEffect(() => {
     if (!ready) return;
-    (async () => { try { await storage.set(key, JSON.stringify(state), shared); } catch (e) {} })();
+    if (shared && ADMIN_PROTECTED_KEYS.has(key) && !adminToken) return; // read-only for visitors
+    (async () => {
+      try {
+        if (shared && adminToken) await storage.adminSet(key, JSON.stringify(state), adminToken);
+        else await storage.set(key, JSON.stringify(state), shared);
+      } catch (e) {}
+    })();
     // eslint-disable-next-line
-  }, [state, ready]);
+  }, [state, ready, adminToken]);
   return [state, setState, ready];
 }
 
@@ -437,10 +446,14 @@ const DEFAULT_PRODUCTS = [
 ];
 
 const fmtStock = (variants) => variants.reduce((s, v) => s + Number(v.stock || 0), 0);
-const TAG_LABELS = { trending: "Trending", "new-season": "New Season", bestseller: "Best Sellers" };
+const DEFAULT_TAGS = [
+  { id: "trending", label: "Trending" },
+  { id: "new-season", label: "New Season" },
+  { id: "bestseller", label: "Best Sellers" },
+];
 
 /* ============================ TOP NAV ==================================== */
-const TopNav = ({ onMenu, onCart, onWishlist, cartCount, wishCount, solid, logoSrc, onLogo, products, currency, openProduct, t, theme, onToggleTheme }) => {
+const TopNav = ({ onMenu, onCart, onWishlist, cartCount, wishCount, solid, onLogo, products, currency, openProduct, t, theme }) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const searchRef = useRef(null);
@@ -462,12 +475,9 @@ const TopNav = ({ onMenu, onCart, onWishlist, cartCount, wishCount, solid, logoS
     <header className={`ldm-nav ${solid ? "ldm-nav--solid" : ""}`}>
       <div className="ldm-nav-left">
         <button className="ldm-nav-icon" onClick={onMenu} aria-label={t.menu}><Menu size={20} strokeWidth={1.4} /></button>
-        <button className="ldm-nav-icon" onClick={onToggleTheme} aria-label={theme === "light" ? t.darkMode : t.lightMode}>
-          {theme === "light" ? <Moon size={18} strokeWidth={1.4} /> : <Sun size={18} strokeWidth={1.4} />}
-        </button>
       </div>
       <button className="ldm-nav-logo" onClick={onLogo} aria-label="La Doble M — home">
-        <LogoMark src={logoSrc} theme={theme} />
+        <LogoMark theme={theme} />
         <span>LA DOBLE M</span>
       </button>
       <div className="ldm-nav-right">
@@ -512,7 +522,7 @@ const TopNav = ({ onMenu, onCart, onWishlist, cartCount, wishCount, solid, logoS
 };
 
 /* =========================== SIDE MENU =================================== */
-const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBrand, currency, setCurrency, t }) => {
+const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBrand, currency, setCurrency, t, theme, onToggleTheme }) => {
   const [expanded, setExpanded] = useState(null);
   const [accountOpen, setAccountOpen] = useState(false);
 
@@ -569,15 +579,19 @@ const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBra
         </nav>
 
         <div className="ldm-drawer-foot">
-          <button className="ldm-drawer-account" onClick={() => setAccountOpen((v) => !v)}>
-            {t.account} <ChevronDown size={14} strokeWidth={1.4} className={`ldm-chev ${accountOpen ? "is-open" : ""}`} />
-          </button>
+          <div className="ldm-drawer-account-row">
+            <button className="ldm-drawer-account" onClick={() => setAccountOpen((v) => !v)}>
+              {t.account} <ChevronDown size={14} strokeWidth={1.4} className={`ldm-chev ${accountOpen ? "is-open" : ""}`} />
+            </button>
+            <button className="ldm-nav-icon" onClick={onToggleTheme} aria-label={theme === "light" ? t.darkMode : t.lightMode}>
+              {theme === "light" ? <Moon size={18} strokeWidth={1.4} /> : <Sun size={18} strokeWidth={1.4} />}
+            </button>
+          </div>
           {accountOpen && <p className="ldm-drawer-account-note">{t.accountNote}</p>}
 
           {/* Currency — kept as the exact same state/logic as before (setCurrency),
               only the UI changed from a stacked button list to a compact dropdown. */}
           <label className="ldm-currency-block">
-            <span className="ldm-drawer-section-label"><Coins size={13} strokeWidth={1.6} /> {t.currencyLabel}</span>
             <select className="ldm-currency-select" value={currency} onChange={(e) => setCurrency(e.target.value)}>
               {Object.entries(CURRENCIES).map(([code, c]) => (
                 <option key={code} value={code}>{c.label}</option>
@@ -591,19 +605,14 @@ const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBra
 };
 
 /* ============================ PRODUCT CARD ================================ */
-const ProductCard = ({ product, currency, onOpen, wishlist, toggleWish }) => {
-  const inWish = wishlist.includes(product.id);
+const ProductCard = ({ product, currency, onOpen, tags }) => {
+  const tagLabel = product.tags?.length > 0 ? (tags.find((tg) => tg.id === product.tags[0])?.label || product.tags[0]) : null;
   return (
     <div className="ldm-card">
       <div className="ldm-card-media">
         <button className="ldm-card-media-btn" onClick={() => onOpen(product)}>
           <Plate product={product} tone={product.tone} className="ldm-card-plate" />
-          {product.tags?.length > 0 && (
-            <span className="ldm-card-tag">{TAG_LABELS[product.tags[0]]}</span>
-          )}
-        </button>
-        <button className={`ldm-card-wish ${inWish ? "is-active" : ""}`} onClick={() => toggleWish(product.id)} aria-label="Toggle favorite">
-          <Star size={15} strokeWidth={1.4} fill={inWish ? "currentColor" : "none"} />
+          {tagLabel && <span className="ldm-card-tag">{tagLabel}</span>}
         </button>
       </div>
       <button className="ldm-card-info" onClick={() => onOpen(product)}>
@@ -618,7 +627,7 @@ const ProductCard = ({ product, currency, onOpen, wishlist, toggleWish }) => {
 };
 
 /* =============================== HOME ===================================== */
-const Home = ({ products, currency, setPage, openProduct, wishlist, toggleWish, t }) => {
+const Home = ({ products, currency, setPage, openProduct, tags, t }) => {
   const visible = products.filter((p) => p.visible);
   const picked = visible.filter((p) => p.featured);
   const featured = (picked.length > 0 ? picked : visible).slice(0, 4);
@@ -641,7 +650,7 @@ const Home = ({ products, currency, setPage, openProduct, wishlist, toggleWish, 
         <div className="ldm-grid">
           {featured.map((p, i) => (
             <Reveal key={p.id} delay={i * 80}>
-              <ProductCard product={p} currency={currency} onOpen={openProduct} wishlist={wishlist} toggleWish={toggleWish} />
+              <ProductCard product={p} currency={currency} onOpen={openProduct} tags={tags} />
             </Reveal>
           ))}
         </div>
@@ -661,12 +670,11 @@ const SORT_OPTIONS = [
   { id: "popular", label: "Más populares" },
 ];
 
-const Shop = ({ products, currency, openProduct, wishlist, toggleWish, activeCategory, activeSub, activeBrand, categories, brands, t }) => {
+const Shop = ({ products, currency, openProduct, tags, activeCategory, activeSub, activeBrand, categories, brands, t }) => {
   const [cat, setCat] = useState(activeCategory || "all");
   const [sub, setSub] = useState(activeSub || null);
   const [brand, setBrand] = useState(activeBrand || null);
-  const [size, setSize] = useState(null);
-  const [color, setColor] = useState(null);
+  const [attrFilters, setAttrFilters] = useState({});
   const [inStockOnly, setInStockOnly] = useState(false);
   const [tag, setTag] = useState(null);
   const [sort, setSort] = useState("newest");
@@ -678,17 +686,23 @@ const Shop = ({ products, currency, openProduct, wishlist, toggleWish, activeCat
 
   useEffect(() => { setCat(activeCategory || "all"); setSub(activeSub || null); setBrand(activeBrand || null); }, [activeCategory, activeSub, activeBrand]);
   useEffect(() => { setMaxPrice(priceCeil); }, [priceCeil]);
+  useEffect(() => { setAttrFilters({}); }, [cat]);
 
-  const inCategory = visible.filter((p) => (cat === "all" || p.category === cat));
-  const allSizes = [...new Set(inCategory.flatMap((p) => p.variants.map((v) => v.size)))];
-  const allColors = [...new Set(inCategory.flatMap((p) => p.variants.map((v) => v.color)))];
+  const inCategory = visible.filter((p) => (cat === "all" || (cat === "new-arrivals" ? p.newArrival : p.category === cat)));
+  const allAttrs = useMemo(() => {
+    const map = new Map();
+    inCategory.forEach((p) => (p.attributes || []).forEach((a) => {
+      if (!map.has(a.id)) map.set(a.id, { id: a.id, name: a.name, values: new Set() });
+      a.values.forEach((v) => map.get(a.id).values.add(v));
+    }));
+    return [...map.values()].map((a) => ({ ...a, values: [...a.values] }));
+  }, [inCategory]);
   const currentCat = categories.find((c) => c.id === cat);
 
   let items = inCategory.filter((p) =>
     (!sub || p.subcategory === sub) &&
     (!brand || p.brand === brand) &&
-    (!size || p.variants.some((v) => v.size === size && Number(v.stock) > 0)) &&
-    (!color || p.variants.some((v) => v.color === color)) &&
+    Object.entries(attrFilters).every(([attrId, val]) => !val || p.variants.some((v) => v.values?.[attrId] === val && Number(v.stock) > 0)) &&
     p.price <= maxPrice &&
     (!inStockOnly || fmtStock(p.variants) > 0) &&
     (!tag || (p.tags || []).includes(tag))
@@ -698,7 +712,7 @@ const Shop = ({ products, currency, openProduct, wishlist, toggleWish, activeCat
   else if (sort === "price-desc") items = [...items].sort((a, b) => b.price - a.price);
   else if (sort === "popular") items = [...items].sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
 
-  const resetFilters = () => { setSize(null); setColor(null); setBrand(null); setInStockOnly(false); setTag(null); setMaxPrice(priceCeil); setSort("newest"); };
+  const resetFilters = () => { setAttrFilters({}); setBrand(null); setInStockOnly(false); setTag(null); setMaxPrice(priceCeil); setSort("newest"); };
 
   return (
     <section className="ldm-section ldm-shop">
@@ -743,33 +757,26 @@ const Shop = ({ products, currency, openProduct, wishlist, toggleWish, activeCat
           <div className="ldm-filter-panel-row">
             <span className="ldm-variant-label">{t.trend}</span>
             <div className="ldm-chip-row">
-              {Object.entries(TAG_LABELS).map(([id, label]) => (
-                <button key={id} className={`ldm-chip ldm-chip--sm ${tag === id ? "is-active" : ""}`} onClick={() => setTag(tag === id ? null : id)}>{label}</button>
+              {tags.map((tg) => (
+                <button key={tg.id} className={`ldm-chip ldm-chip--sm ${tag === tg.id ? "is-active" : ""}`} onClick={() => setTag(tag === tg.id ? null : tg.id)}>{tg.label}</button>
               ))}
             </div>
           </div>
 
-          {allSizes.length > 0 && (
-            <div className="ldm-filter-panel-row">
-              <span className="ldm-variant-label">{t.size}</span>
+          {allAttrs.map((attr) => (
+            <div className="ldm-filter-panel-row" key={attr.id}>
+              <span className="ldm-variant-label">{attr.name}</span>
               <div className="ldm-chip-row">
-                {allSizes.map((s) => (
-                  <button key={s} className={`ldm-chip ldm-chip--sm ${size === s ? "is-active" : ""}`} onClick={() => setSize(size === s ? null : s)}>{s}</button>
+                {attr.values.map((val) => (
+                  <button
+                    key={val}
+                    className={`ldm-chip ldm-chip--sm ${attrFilters[attr.id] === val ? "is-active" : ""}`}
+                    onClick={() => setAttrFilters((f) => ({ ...f, [attr.id]: f[attr.id] === val ? null : val }))}
+                  >{val}</button>
                 ))}
               </div>
             </div>
-          )}
-
-          {allColors.length > 0 && (
-            <div className="ldm-filter-panel-row">
-              <span className="ldm-variant-label">{t.color}</span>
-              <div className="ldm-chip-row">
-                {allColors.map((c) => (
-                  <button key={c} className={`ldm-chip ldm-chip--sm ${color === c ? "is-active" : ""}`} onClick={() => setColor(color === c ? null : c)}>{c}</button>
-                ))}
-              </div>
-            </div>
-          )}
+          ))}
 
           <div className="ldm-filter-panel-row">
             <span className="ldm-variant-label">{t.maxPrice} — {formatPrice(maxPrice, currency)}</span>
@@ -795,7 +802,7 @@ const Shop = ({ products, currency, openProduct, wishlist, toggleWish, activeCat
       <div className="ldm-grid">
         {items.map((p, i) => (
           <Reveal key={p.id} delay={(i % 6) * 60}>
-            <ProductCard product={p} currency={currency} onOpen={openProduct} wishlist={wishlist} toggleWish={toggleWish} />
+            <ProductCard product={p} currency={currency} onOpen={openProduct} tags={tags} />
           </Reveal>
         ))}
         {items.length === 0 && <p className="ldm-empty-note">{t.noneYet}</p>}
@@ -867,22 +874,31 @@ const ReviewsSection = ({ product, canReview, t }) => {
 };
 
 const ProductPage = ({ product, currency, addToCart, wishlist, toggleWish, t, purchasedIds }) => {
-  const sizes = [...new Set(product.variants.map((v) => v.size))];
-  const colors = [...new Set(product.variants.map((v) => v.color))];
-  const [size, setSize] = useState(null);
-  const [color, setColor] = useState(colors[0] || null);
+  const attributes = product.attributes || [];
+  const [selected, setSelected] = useState({});
   const [qty, setQty] = useState(1);
   const [toast, setToast] = useState(false);
 
-  useEffect(() => { setSize(null); setColor(colors[0] || null); setQty(1); }, [product]);
+  useEffect(() => {
+    const init = {};
+    attributes.forEach((a) => { if (!a.required && a.values.length) init[a.id] = a.values[0]; });
+    setSelected(init);
+    setQty(1);
+    // eslint-disable-next-line
+  }, [product]);
 
-  const activeVariant = product.variants.find((v) => v.size === size && v.color === color);
+  const allChosen = attributes.every((a) => selected[a.id]);
+  const activeVariant = attributes.length && allChosen
+    ? product.variants.find((v) => attributes.every((a) => v.values?.[a.id] === selected[a.id]))
+    : (attributes.length === 0 ? product.variants[0] : null);
   const stock = activeVariant ? Number(activeVariant.stock) : 0;
+  const missingRequired = attributes.some((a) => a.required && !selected[a.id]);
+  const canAdd = !missingRequired && allChosen && stock > 0;
   const inWish = wishlist.includes(product.id);
 
   const handleAdd = () => {
-    if (!size || stock <= 0) return;
-    addToCart({ ...product, size, color, qty: Math.min(qty, stock) });
+    if (!canAdd) return;
+    addToCart({ ...product, selected, qty: Math.min(qty, stock) });
     setToast(true);
     setTimeout(() => setToast(false), 2000);
   };
@@ -900,29 +916,30 @@ const ProductPage = ({ product, currency, addToCart, wishlist, toggleWish, t, pu
         <h1 className="ldm-h1 ldm-product-title">{product.name}</h1>
         <p className="ldm-product-price">{formatPrice(product.price, currency)}</p>
 
-        <div className="ldm-variant-block">
-          <span className="ldm-variant-label">{t.color} — {color}</span>
-          <div className="ldm-chip-row">
-            {colors.map((c) => (
-              <button key={c} className={`ldm-chip ldm-chip--sm ${color === c ? "is-active" : ""}`} onClick={() => setColor(c)}>{c}</button>
-            ))}
+        {attributes.map((attr) => (
+          <div className="ldm-variant-block" key={attr.id}>
+            <span className="ldm-variant-label">{attr.name}{selected[attr.id] ? ` — ${selected[attr.id]}` : ""}{attr.required ? " *" : ""}</span>
+            <div className="ldm-chip-row">
+              {attr.values.map((val) => {
+                const wouldMatch = { ...selected, [attr.id]: val };
+                const anyStock = attributes.every((a) => wouldMatch[a.id]) &&
+                  product.variants.some((v) => attributes.every((a) => v.values?.[a.id] === wouldMatch[a.id]) && Number(v.stock) > 0);
+                const out = attributes.every((a) => wouldMatch[a.id]) && !anyStock;
+                return (
+                  <button
+                    key={val}
+                    disabled={out}
+                    className={`ldm-chip ldm-chip--sm ${selected[attr.id] === val ? "is-active" : ""} ${out ? "is-disabled" : ""}`}
+                    onClick={() => setSelected((s) => ({ ...s, [attr.id]: val }))}
+                  >{val}</button>
+                );
+              })}
+            </div>
+            {attr.required && !selected[attr.id] && <span className="ldm-size-warn">Selecciona {attr.name.toLowerCase()}</span>}
           </div>
-        </div>
+        ))}
 
-        <div className="ldm-variant-block">
-          <span className="ldm-variant-label">{t.size} {size ? `— ${size}` : ""}</span>
-          <div className="ldm-chip-row">
-            {sizes.map((s) => {
-              const v = product.variants.find((vv) => vv.size === s && vv.color === color);
-              const out = !v || Number(v.stock) <= 0;
-              return (
-                <button key={s} disabled={out} className={`ldm-chip ldm-chip--sm ${size === s ? "is-active" : ""} ${out ? "is-disabled" : ""}`} onClick={() => setSize(s)}>{s}</button>
-              );
-            })}
-          </div>
-          {!size && <span className="ldm-size-warn">{t.selectSize}</span>}
-          {size && stock > 0 && stock <= 5 && <span className="ldm-size-warn ldm-size-warn--low">{t.left(stock)}</span>}
-        </div>
+        {allChosen && stock > 0 && stock <= 5 && <span className="ldm-size-warn ldm-size-warn--low">{t.left(stock)}</span>}
 
         <div className="ldm-variant-block ldm-qty-row">
           <span className="ldm-variant-label">{t.qty}</span>
@@ -934,11 +951,11 @@ const ProductPage = ({ product, currency, addToCart, wishlist, toggleWish, t, pu
         </div>
 
         <button
-          className={`ldm-btn ldm-btn--solid ldm-add-btn ${(!size || stock <= 0) ? "is-disabled" : ""}`}
+          className={`ldm-btn ldm-btn--solid ldm-add-btn ${!canAdd ? "is-disabled" : ""}`}
           onClick={handleAdd}
-          disabled={!size || stock <= 0}
+          disabled={!canAdd}
         >
-          {!size ? t.selectSizeBtn : stock <= 0 ? t.outOfStock : t.addToBag}
+          {missingRequired ? t.selectSizeBtn : stock <= 0 ? t.outOfStock : t.addToBag}
         </button>
 
         <p className="ldm-product-desc">{product.desc}</p>
@@ -977,7 +994,7 @@ const BagDrawer = ({ open, onClose, cart, currency, updateQty, removeItem, setPa
                   <Plate product={item} tone={item.tone} className="ldm-panel-item-plate" />
                   <div className="ldm-panel-item-info">
                     <p className="ldm-panel-item-name">{item.name}</p>
-                    <p className="ldm-panel-item-meta">{item.color} — {item.size}</p>
+                    <p className="ldm-panel-item-meta">{(item.attributes || []).map((a) => item.selected?.[a.id]).filter(Boolean).join(" — ")}</p>
                     <div className="ldm-qty-stepper ldm-qty-stepper--sm">
                       <button onClick={() => updateQty(idx, Math.max(1, item.qty - 1))}><Minus size={11} strokeWidth={1.4} /></button>
                       <span>{item.qty}</span>
@@ -1255,10 +1272,10 @@ const WishlistDrawer = ({ open, onClose, products, wishlist, currency, toggleWis
 };
 
 /* ================================ FOOTER ==================================== */
-const Footer = ({ setPage, logoSrc, t, theme }) => (
+const Footer = ({ setPage, t, theme }) => (
   <footer className="ldm-footer">
     <div className="ldm-footer-top">
-      <button className="ldm-logo-mark" onClick={() => setPage("home")}><LogoMark size="ldm-logomark--lg" src={logoSrc} theme={theme} /><span>LA DOBLE M</span></button>
+      <button className="ldm-logo-mark" onClick={() => setPage("home")}><LogoMark size="ldm-logomark--lg" theme={theme} /><span>LA DOBLE M</span></button>
       <div className="ldm-footer-cols">
         <div><span className="ldm-eyebrow">{t.store}</span><button onClick={() => setPage("shop")}>{t.collection}</button></div>
         <div><span className="ldm-eyebrow">{t.customerCare}</span><button>{t.shipments}</button><button>{t.returns}</button></div>
@@ -1274,27 +1291,39 @@ const Footer = ({ setPage, logoSrc, t, theme }) => (
 /* ============================================================================
    ADMIN CMS
    ============================================================================ */
-const ADMIN_CREDENTIALS = { user: "Martin", pass: "2026doblemj" };
-
-const AdminLogin = ({ onSuccess, onExit, logoSrc, theme }) => {
+// Credentials are verified server-side (api/admin-login.js) against env vars —
+// nothing secret ships in this bundle, unlike the old client-side check.
+const AdminLogin = ({ onSuccess, onExit, theme }) => {
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState("");
-  const submit = () => {
-    const userWrong = user.trim() !== ADMIN_CREDENTIALS.user;
-    const passWrong = pass !== ADMIN_CREDENTIALS.pass;
-    if (userWrong && passWrong) { setError("Credenciales inválidas."); return; }
-    if (userWrong) { setError("Usuario incorrecto."); return; }
-    if (passWrong) { setError("Contraseña incorrecta."); return; }
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if (loading) return;
     setError("");
-    onSuccess();
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user: user.trim(), pass }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.token) { setError("Credenciales inválidas."); return; }
+      onSuccess(data.token);
+    } catch (e) {
+      setError("No pudimos conectar con el servidor. Intentá de nuevo.");
+    } finally {
+      setLoading(false);
+    }
   };
   const handleKeyDown = (e) => { if (e.key === "Enter") submit(); };
   return (
     <div className="ldm-admin-login">
       <div className="ldm-admin-login-card">
-        <div className="ldm-logo-mark"><LogoMark size="ldm-logomark--lg" src={logoSrc} theme={theme} /><span>LA DOBLE M</span></div>
+        <div className="ldm-logo-mark"><LogoMark size="ldm-logomark--lg" theme={theme} /><span>LA DOBLE M</span></div>
         <h1>Admin Login</h1>
         <label>Usuario<input value={user} onChange={(e) => setUser(e.target.value)} onKeyDown={handleKeyDown} autoFocus /></label>
         <label>
@@ -1305,7 +1334,7 @@ const AdminLogin = ({ onSuccess, onExit, logoSrc, theme }) => {
           </div>
         </label>
         {error && <p className="ldm-admin-error">{error}</p>}
-        <button className="ldm-btn ldm-btn--solid ldm-full" type="button" onClick={submit}><Lock size={13} strokeWidth={1.6} /> Ingresar</button>
+        <button className="ldm-btn ldm-btn--solid ldm-full" type="button" onClick={submit} disabled={loading}><Lock size={13} strokeWidth={1.6} /> {loading ? "Verificando…" : "Ingresar"}</button>
         <button type="button" className="ldm-text-link" onClick={onExit}><ArrowLeft size={14} strokeWidth={1.4} /> Volver a la tienda</button>
       </div>
     </div>
@@ -1323,12 +1352,46 @@ const emptyProduct = (categories, brands) => ({
   variant: "jacket",
   tone: 0,
   images: [],
-  visible: true,
+  visible: false,
+  newArrival: true,
   desc: "",
   tags: [],
   popularity: 50,
-  variants: [{ id: `v${Date.now()}`, size: "", color: "", stock: 0 }],
+  attributes: [],
+  variants: [],
 });
+
+// Cartesian product of an attribute list's values, e.g. [{id:'color',values:['Azul','Rojo']}]
+// -> [{color:'Azul'}, {color:'Rojo'}]. Used to auto-generate the stock grid.
+function cartesianCombos(attributes) {
+  if (!attributes || attributes.length === 0) return [];
+  return attributes.reduce((acc, attr) => {
+    const vals = attr.values.length ? attr.values : [""];
+    const next = [];
+    acc.forEach((combo) => vals.forEach((v) => next.push({ ...combo, [attr.id]: v })));
+    return next;
+  }, [{}]);
+}
+const comboKey = (values) => Object.keys(values).sort().map((k) => `${k}:${values[k]}`).join("|");
+
+// Reads legacy { size, color, stock } variants (from data saved before the
+// custom-attributes feature) and synthesizes an equivalent attributes/variants
+// shape, so old catalog data keeps working without a manual migration.
+function normalizeProduct(p) {
+  if (p.attributes) return { newArrival: false, ...p };
+  const variants = p.variants || [];
+  const sizes = [...new Set(variants.map((v) => v.size).filter(Boolean))];
+  const colors = [...new Set(variants.map((v) => v.color).filter(Boolean))];
+  const attributes = [];
+  if (sizes.length) attributes.push({ id: "size", name: "Talla", required: true, values: sizes });
+  if (colors.length) attributes.push({ id: "color", name: "Color", required: true, values: colors });
+  const newVariants = variants.map((v) => ({
+    id: v.id,
+    stock: v.stock,
+    values: { ...(sizes.length ? { size: v.size } : {}), ...(colors.length ? { color: v.color } : {}) },
+  }));
+  return { newArrival: false, ...p, attributes, variants: newVariants };
+}
 
 const VARIANT_ICONS = ["jacket", "denim", "knit", "boot", "bag", "hat", "belt", "dress"];
 
@@ -1351,16 +1414,53 @@ const AdminImageThumb = ({ image, onRemove }) => {
   );
 };
 
-const ProductForm = ({ product, categories, brands, onSave, onCancel }) => {
+const ProductForm = ({ product, categories, brands, tags, onSave, onCancel }) => {
   const [draft, setDraft] = useState(product);
   const fileInputRef = useRef(null);
   const cat = categories.find((c) => c.id === draft.category);
 
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
-  const setVariant = (idx, patch) => setDraft((d) => ({ ...d, variants: d.variants.map((v, i) => (i === idx ? { ...v, ...patch } : v)) }));
-  const addVariantRow = () => setDraft((d) => ({ ...d, variants: [...d.variants, { id: `v${Date.now()}`, size: "", color: "", stock: 0 }] }));
-  const removeVariantRow = (idx) => setDraft((d) => ({ ...d, variants: d.variants.filter((_, i) => i !== idx) }));
   const toggleTag = (tag) => setDraft((d) => ({ ...d, tags: (d.tags || []).includes(tag) ? d.tags.filter((t) => t !== tag) : [...(d.tags || []), tag] }));
+
+  // --- custom attributes (talla, color, o lo que el admin quiera) ---
+  const attributes = draft.attributes || [];
+  const setAttributes = (next) => setDraft((d) => ({ ...d, attributes: next }));
+  const addAttribute = () => setAttributes([...attributes, { id: `attr${Date.now()}`, name: "", required: true, values: [] }]);
+  const updateAttribute = (idx, patch) => setAttributes(attributes.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  const removeAttribute = (idx) => setAttributes(attributes.filter((_, i) => i !== idx));
+  const moveAttribute = (idx, dir) => {
+    const j = idx + dir;
+    if (j < 0 || j >= attributes.length) return;
+    const arr = [...attributes];
+    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    setAttributes(arr);
+  };
+  const addAttrValue = (idx, val) => {
+    const clean = (val || "").trim();
+    if (!clean) return;
+    updateAttribute(idx, { values: [...attributes[idx].values, clean] });
+  };
+  const removeAttrValue = (idx, vi) => updateAttribute(idx, { values: attributes[idx].values.filter((_, i) => i !== vi) });
+  const moveAttrValue = (idx, vi, dir) => {
+    const j = vi + dir;
+    const vals = attributes[idx].values;
+    if (j < 0 || j >= vals.length) return;
+    const arr = [...vals];
+    [arr[vi], arr[j]] = [arr[j], arr[vi]];
+    updateAttribute(idx, { values: arr });
+  };
+
+  const combos = cartesianCombos(attributes);
+  const setComboStock = (values, stock) => {
+    const key = comboKey(values);
+    setDraft((d) => {
+      const exists = d.variants.some((v) => comboKey(v.values) === key);
+      const variants = exists
+        ? d.variants.map((v) => (comboKey(v.values) === key ? { ...v, stock } : v))
+        : [...d.variants, { id: `v${Date.now()}${Math.random().toString(36).slice(2, 5)}`, values, stock }];
+      return { ...d, variants };
+    });
+  };
 
   const [urlDraft, setUrlDraft] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -1446,6 +1546,9 @@ const ProductForm = ({ product, categories, brands, onSave, onCancel }) => {
         <label className="ldm-admin-field ldm-admin-field--checkbox">
           <input type="checkbox" checked={!!draft.featured} onChange={(e) => set({ featured: e.target.checked })} /> Destacado en Home
         </label>
+        <label className="ldm-admin-field ldm-admin-field--checkbox">
+          <input type="checkbox" checked={!!draft.newArrival} onChange={(e) => set({ newArrival: e.target.checked })} /> Nuevos Ingresos (New Arrivals)
+        </label>
 
         <label className="ldm-admin-field ldm-admin-field--full">Descripción
           <textarea rows={3} value={draft.desc} onChange={(e) => set({ desc: e.target.value })} />
@@ -1455,9 +1558,10 @@ const ProductForm = ({ product, categories, brands, onSave, onCancel }) => {
       <div className="ldm-admin-subsection">
         <h3>Etiquetas de tendencia</h3>
         <div className="ldm-chip-row">
-          {Object.entries(TAG_LABELS).map(([id, label]) => (
-            <button key={id} type="button" className={`ldm-chip ldm-chip--sm ${(draft.tags || []).includes(id) ? "is-active" : ""}`} onClick={() => toggleTag(id)}>{label}</button>
+          {tags.map((tg) => (
+            <button key={tg.id} type="button" className={`ldm-chip ldm-chip--sm ${(draft.tags || []).includes(tg.id) ? "is-active" : ""}`} onClick={() => toggleTag(tg.id)}>{tg.label}</button>
           ))}
+          {tags.length === 0 && <p className="ldm-empty-note">Creá etiquetas en la pestaña "Etiquetas".</p>}
         </div>
       </div>
 
@@ -1480,29 +1584,86 @@ const ProductForm = ({ product, categories, brands, onSave, onCancel }) => {
       </div>
 
       <div className="ldm-admin-subsection">
-        <h3>Variantes (talla / color / stock)</h3>
-        <div className="ldm-admin-variant-table">
-          {draft.variants.map((v, i) => (
-            <div className="ldm-admin-variant-row" key={v.id}>
-              <input placeholder="Talla" value={v.size} onChange={(e) => setVariant(i, { size: e.target.value })} />
-              <input placeholder="Color" value={v.color} onChange={(e) => setVariant(i, { color: e.target.value })} />
-              <input type="number" placeholder="Stock" value={v.stock} onChange={(e) => setVariant(i, { stock: Number(e.target.value) })} />
-              <button onClick={() => removeVariantRow(i)} aria-label="Eliminar variante"><Trash2 size={13} strokeWidth={1.4} /></button>
+        <h3>Atributos (talla, color, o lo que necesites)</h3>
+        <div className="ldm-admin-attrs">
+          {attributes.map((attr, ai) => (
+            <div className="ldm-admin-attr-block" key={attr.id}>
+              <div className="ldm-admin-attr-head">
+                <input placeholder="Nombre (ej. Color)" value={attr.name} onChange={(e) => updateAttribute(ai, { name: e.target.value })} />
+                <label className="ldm-admin-field--checkbox ldm-admin-attr-required">
+                  <input type="checkbox" checked={attr.required} onChange={(e) => updateAttribute(ai, { required: e.target.checked })} /> Obligatoria
+                </label>
+                <button onClick={() => moveAttribute(ai, -1)} disabled={ai === 0} aria-label="Subir atributo"><ArrowUp size={13} strokeWidth={1.4} /></button>
+                <button onClick={() => moveAttribute(ai, 1)} disabled={ai === attributes.length - 1} aria-label="Bajar atributo"><ArrowDown size={13} strokeWidth={1.4} /></button>
+                <button onClick={() => removeAttribute(ai)} aria-label="Eliminar atributo"><Trash2 size={13} strokeWidth={1.4} /></button>
+              </div>
+              <div className="ldm-admin-subs">
+                {attr.values.map((val, vi) => (
+                  <span key={vi} className="ldm-admin-sub-tag">
+                    {val}
+                    <button onClick={() => moveAttrValue(ai, vi, -1)} disabled={vi === 0} aria-label="Mover antes"><ArrowUp size={11} strokeWidth={1.6} /></button>
+                    <button onClick={() => moveAttrValue(ai, vi, 1)} disabled={vi === attr.values.length - 1} aria-label="Mover después"><ArrowDown size={11} strokeWidth={1.6} /></button>
+                    <button onClick={() => removeAttrValue(ai, vi)}><X size={11} strokeWidth={1.6} /></button>
+                  </span>
+                ))}
+              </div>
+              <AttrValueAdder onAdd={(val) => addAttrValue(ai, val)} />
             </div>
           ))}
         </div>
-        <button className="ldm-text-link" onClick={addVariantRow}><Plus size={13} strokeWidth={1.4} /> Añadir fila de variante</button>
+        <button className="ldm-text-link" onClick={addAttribute}><Plus size={13} strokeWidth={1.4} /> Añadir atributo</button>
+      </div>
+
+      <div className="ldm-admin-subsection">
+        <h3>Stock por combinación</h3>
+        {combos.length === 0 ? (
+          <p className="ldm-empty-note">Agregá al menos un atributo con valores para generar combinaciones de stock.</p>
+        ) : (
+          <div className="ldm-admin-variant-table">
+            <div className="ldm-admin-variant-row ldm-admin-variant-row--head" style={{ gridTemplateColumns: `repeat(${attributes.length}, 1fr) 1fr` }}>
+              {attributes.map((a) => <span key={a.id}>{a.name || "—"}</span>)}
+              <span>Stock</span>
+            </div>
+            {combos.map((values) => {
+              const key = comboKey(values);
+              const existing = draft.variants.find((v) => comboKey(v.values) === key);
+              return (
+                <div className="ldm-admin-variant-row" key={key} style={{ gridTemplateColumns: `repeat(${attributes.length}, 1fr) 1fr` }}>
+                  {attributes.map((a) => <span key={a.id}>{values[a.id]}</span>)}
+                  <input type="number" value={existing?.stock ?? 0} onChange={(e) => setComboStock(values, Number(e.target.value))} />
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="ldm-admin-form-actions">
         <button className="ldm-btn ldm-btn--outline" onClick={onCancel}>Cancelar</button>
-        <button className="ldm-btn ldm-btn--solid" onClick={() => onSave(draft)}>Guardar Producto</button>
+        <button
+          className="ldm-btn ldm-btn--solid"
+          onClick={() => {
+            const comboKeys = new Set(combos.map(comboKey));
+            onSave({ ...draft, variants: draft.variants.filter((v) => comboKeys.has(comboKey(v.values))) });
+          }}
+        >Guardar Producto</button>
       </div>
     </div>
   );
 };
 
-const ProductTable = ({ products, categories, onEdit, onDelete, onToggleVisible, onAdd }) => (
+const AttrValueAdder = ({ onAdd }) => {
+  const [val, setVal] = useState("");
+  const submit = () => { if (val.trim()) { onAdd(val); setVal(""); } };
+  return (
+    <div className="ldm-admin-add-row ldm-admin-add-row--sm">
+      <input placeholder="Nuevo valor" value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+      <button className="ldm-btn ldm-btn--outline" onClick={submit}>Añadir</button>
+    </div>
+  );
+};
+
+const ProductTable = ({ products, categories, onEdit, onDelete, onToggleVisible, onDuplicate, onAdd }) => (
   <div className="ldm-admin-table-wrap">
     <div className="ldm-admin-table-head">
       <h2>Productos ({products.length})</h2>
@@ -1527,6 +1688,7 @@ const ProductTable = ({ products, categories, onEdit, onDelete, onToggleVisible,
           </div>
           <div className="ldm-admin-card-actions">
             <button onClick={() => onEdit(p)}><Pencil size={13} strokeWidth={1.4} /> Editar</button>
+            <button onClick={() => onDuplicate(p.id)}><Copy size={13} strokeWidth={1.4} /> Duplicar</button>
             <button onClick={() => onDelete(p.id)}><Trash2 size={13} strokeWidth={1.4} /> Eliminar</button>
           </div>
         </div>
@@ -1554,6 +1716,14 @@ const CategoryManager = ({ categories, setCategories }) => {
     setSubDrafts((d) => ({ ...d, [catId]: "" }));
   };
   const deleteSub = (catId, sub) => setCategories((c) => c.map((cat) => (cat.id === catId ? { ...cat, subcategories: cat.subcategories.filter((s) => s !== sub) } : cat)));
+  const moveSub = (catId, idx, dir) => setCategories((c) => c.map((cat) => {
+    if (cat.id !== catId) return cat;
+    const j = idx + dir;
+    if (j < 0 || j >= cat.subcategories.length) return cat;
+    const arr = [...cat.subcategories];
+    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    return { ...cat, subcategories: arr };
+  }));
 
   return (
     <div className="ldm-admin-table-wrap">
@@ -1570,8 +1740,13 @@ const CategoryManager = ({ categories, setCategories }) => {
               <button onClick={() => deleteCategory(cat.id)} aria-label="Eliminar categoría"><Trash2 size={13} strokeWidth={1.4} /></button>
             </div>
             <div className="ldm-admin-subs">
-              {cat.subcategories.map((s) => (
-                <span key={s} className="ldm-admin-sub-tag">{s} <button onClick={() => deleteSub(cat.id, s)}><X size={11} strokeWidth={1.6} /></button></span>
+              {cat.subcategories.map((s, si) => (
+                <span key={s} className="ldm-admin-sub-tag">
+                  {s}
+                  <button onClick={() => moveSub(cat.id, si, -1)} disabled={si === 0} aria-label="Mover antes"><ArrowUp size={11} strokeWidth={1.6} /></button>
+                  <button onClick={() => moveSub(cat.id, si, 1)} disabled={si === cat.subcategories.length - 1} aria-label="Mover después"><ArrowDown size={11} strokeWidth={1.6} /></button>
+                  <button onClick={() => deleteSub(cat.id, s)}><X size={11} strokeWidth={1.6} /></button>
+                </span>
               ))}
             </div>
             <div className="ldm-admin-add-row ldm-admin-add-row--sm">
@@ -1590,22 +1765,88 @@ const BrandManager = ({ brands, setBrands }) => {
   const addBrand = () => {
     if (!newBrand.trim()) return;
     const id = newBrand.trim().toLowerCase().replace(/\s+/g, "-");
-    setBrands((b) => [...b, { id, label: newBrand.trim() }]);
+    setBrands((b) => [...b, { id, label: newBrand.trim() }].sort((x, y) => x.label.localeCompare(y.label, "es")));
     setNewBrand("");
   };
   const deleteBrand = (id) => setBrands((b) => b.filter((br) => br.id !== id));
+  const sortAlpha = () => setBrands((b) => [...b].sort((x, y) => x.label.localeCompare(y.label, "es")));
+  const moveBrand = (idx, dir) => setBrands((b) => {
+    const j = idx + dir;
+    if (j < 0 || j >= b.length) return b;
+    const arr = [...b];
+    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    return arr;
+  });
   return (
     <div className="ldm-admin-table-wrap">
-      <div className="ldm-admin-table-head"><h2>Marcas</h2></div>
+      <div className="ldm-admin-table-head">
+        <h2>Marcas</h2>
+        <button className="ldm-btn ldm-btn--outline" onClick={sortAlpha}>Ordenar A-Z</button>
+      </div>
       <div className="ldm-admin-add-row">
         <input placeholder="Nueva marca" value={newBrand} onChange={(e) => setNewBrand(e.target.value)} />
         <button className="ldm-btn ldm-btn--solid" onClick={addBrand}><Plus size={13} strokeWidth={1.6} /> Añadir Marca</button>
       </div>
       <div className="ldm-admin-subs">
-        {brands.map((b) => (
-          <span key={b.id} className="ldm-admin-sub-tag">{b.label} <button onClick={() => deleteBrand(b.id)}><X size={11} strokeWidth={1.6} /></button></span>
+        {brands.map((b, bi) => (
+          <span key={b.id} className="ldm-admin-sub-tag">
+            {b.label}
+            <button onClick={() => moveBrand(bi, -1)} disabled={bi === 0} aria-label="Mover antes"><ArrowUp size={11} strokeWidth={1.6} /></button>
+            <button onClick={() => moveBrand(bi, 1)} disabled={bi === brands.length - 1} aria-label="Mover después"><ArrowDown size={11} strokeWidth={1.6} /></button>
+            <button onClick={() => deleteBrand(b.id)}><X size={11} strokeWidth={1.6} /></button>
+          </span>
         ))}
         {brands.length === 0 && <p className="ldm-empty-note">Aún no hay marcas.</p>}
+      </div>
+    </div>
+  );
+};
+
+const TagManager = ({ tags, setTags }) => {
+  const [newTag, setNewTag] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState("");
+  const addTag = () => {
+    if (!newTag.trim()) return;
+    const id = `tag${Date.now()}`;
+    setTags((t) => [...t, { id, label: newTag.trim() }]);
+    setNewTag("");
+  };
+  const deleteTag = (id) => setTags((t) => t.filter((tg) => tg.id !== id));
+  const startEdit = (tg) => { setEditingId(tg.id); setEditValue(tg.label); };
+  const saveEdit = () => {
+    setTags((t) => t.map((tg) => (tg.id === editingId ? { ...tg, label: editValue.trim() || tg.label } : tg)));
+    setEditingId(null);
+  };
+  return (
+    <div className="ldm-admin-table-wrap">
+      <div className="ldm-admin-table-head"><h2>Etiquetas</h2></div>
+      <div className="ldm-admin-add-row">
+        <input placeholder="Nueva etiqueta" value={newTag} onChange={(e) => setNewTag(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addTag(); }} />
+        <button className="ldm-btn ldm-btn--solid" onClick={addTag}><Plus size={13} strokeWidth={1.6} /> Añadir Etiqueta</button>
+      </div>
+      <div className="ldm-admin-subs">
+        {tags.map((tg) => (
+          editingId === tg.id ? (
+            <span key={tg.id} className="ldm-admin-sub-tag">
+              <input
+                className="ldm-admin-tag-edit-input"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); }}
+                autoFocus
+              />
+              <button onClick={saveEdit}><Check size={11} strokeWidth={1.8} /></button>
+            </span>
+          ) : (
+            <span key={tg.id} className="ldm-admin-sub-tag">
+              {tg.label}
+              <button onClick={() => startEdit(tg)} aria-label="Editar etiqueta"><Pencil size={11} strokeWidth={1.6} /></button>
+              <button onClick={() => deleteTag(tg.id)}><X size={11} strokeWidth={1.6} /></button>
+            </span>
+          )
+        ))}
+        {tags.length === 0 && <p className="ldm-empty-note">Aún no hay etiquetas.</p>}
       </div>
     </div>
   );
@@ -1817,7 +2058,7 @@ const OrderManager = ({ orders, setOrders, currency }) => {
   );
 };
 
-const AdminDashboard = ({ products, setProducts, categories, setCategories, brands, setBrands, orders, setOrders, currency, onLogout, onExit }) => {
+const AdminDashboard = ({ products, setProducts, categories, setCategories, brands, setBrands, tags, setTags, orders, setOrders, currency, onLogout, onExit }) => {
   const [tab, setTab] = useState("products");
   const [editing, setEditing] = useState(null);
 
@@ -1837,13 +2078,19 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
     });
   };
   const toggleVisible = (id) => setProducts((ps) => ps.map((p) => (p.id === id ? { ...p, visible: !p.visible } : p)));
+  const duplicateProduct = (id) => {
+    const src = products.find((p) => p.id === id);
+    if (!src) return;
+    const copy = { ...src, id: `p${Date.now()}`, name: `${src.name} (copia)`, visible: false, newArrival: true };
+    setProducts((ps) => [...ps, copy]);
+  };
 
   return (
     <div className="ldm-admin">
       <header className="ldm-admin-header">
-        <div className="ldm-logo-mark"><LogoMark size="ldm-logomark--lg" /><span>LA DOBLE M Admin</span></div>
+        <button className="ldm-logo-mark" onClick={onExit}><LogoMark size="ldm-logomark--lg" /><span>LA DOBLE M Admin</span></button>
         <div className="ldm-admin-header-actions">
-          <button className="ldm-text-link" onClick={onExit}><ArrowLeft size={14} strokeWidth={1.4} /> Ver Tienda</button>
+          <button className="ldm-text-link" onClick={onExit}><ArrowLeft size={14} strokeWidth={1.4} /> Volver</button>
           <button className="ldm-text-link" onClick={onLogout}><LogOut size={14} strokeWidth={1.4} /> Cerrar Sesión</button>
         </div>
       </header>
@@ -1853,6 +2100,7 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
           <button className={tab === "orders" ? "is-active" : ""} onClick={() => { setTab("orders"); setEditing(null); }}>Pedidos</button>
           <button className={tab === "categories" ? "is-active" : ""} onClick={() => { setTab("categories"); setEditing(null); }}>Categorías</button>
           <button className={tab === "brands" ? "is-active" : ""} onClick={() => { setTab("brands"); setEditing(null); }}>Marcas</button>
+          <button className={tab === "tags" ? "is-active" : ""} onClick={() => { setTab("tags"); setEditing(null); }}>Etiquetas</button>
         </nav>
         <main className="ldm-admin-main">
           {tab === "products" && (
@@ -1861,16 +2109,18 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
                 product={editing === "new" ? emptyProduct(categories, brands) : editing}
                 categories={categories}
                 brands={brands}
+                tags={tags}
                 onSave={saveProduct}
                 onCancel={() => setEditing(null)}
               />
             ) : (
-              <ProductTable products={products} categories={categories} onEdit={setEditing} onDelete={deleteProduct} onToggleVisible={toggleVisible} onAdd={() => setEditing("new")} />
+              <ProductTable products={products} categories={categories} onEdit={setEditing} onDelete={deleteProduct} onToggleVisible={toggleVisible} onDuplicate={duplicateProduct} onAdd={() => setEditing("new")} />
             )
           )}
           {tab === "orders" && <OrderManager orders={orders} setOrders={setOrders} currency={currency} />}
           {tab === "categories" && <CategoryManager categories={categories} setCategories={setCategories} />}
           {tab === "brands" && <BrandManager brands={brands} setBrands={setBrands} />}
+          {tab === "tags" && <TagManager tags={tags} setTags={setTags} />}
         </main>
       </div>
     </div>
@@ -1884,11 +2134,18 @@ export default function App() {
   const [lang, setLang] = useStoredState("ldm-lang", "es", false);
   const [cart, setCart] = useStoredState("ldm-cart", [], false);
   const [wishlist, setWishlist] = useStoredState("ldm-wishlist", [], false);
-  const [products, setProducts] = useStoredState("ldm-products", DEFAULT_PRODUCTS, true);
-  const [categories, setCategories] = useStoredState("ldm-categories", DEFAULT_CATEGORIES, true);
-  const [brands, setBrands] = useStoredState("ldm-brands", DEFAULT_BRANDS, true);
+  // Admin session token lives in the person's own (non-shared) storage, so
+  // once they log in it stays valid across reloads until they log out or it
+  // expires. It's what authorizes writes to the admin-protected keys below.
+  const [adminToken, setAdminToken, adminTokenReady] = useStoredState("ldm-admin-token", null, false);
+  const isAdmin = !!adminToken && Number(String(adminToken).split(".")[0]) > Date.now();
+
+  const [rawProducts, setProducts] = useStoredState("ldm-products", DEFAULT_PRODUCTS, true, adminToken);
+  const products = useMemo(() => rawProducts.map(normalizeProduct), [rawProducts]);
+  const [categories, setCategories] = useStoredState("ldm-categories", DEFAULT_CATEGORIES, true, adminToken);
+  const [brands, setBrands] = useStoredState("ldm-brands", DEFAULT_BRANDS, true, adminToken);
+  const [tags, setTags] = useStoredState("ldm-tags", DEFAULT_TAGS, true, adminToken);
   const [orders, setOrders] = useStoredState("ldm-orders", [], true);
-  const [logoSrc] = useStoredState("ldm-logo", null, true);
 
   const t = STRINGS[lang] || STRINGS.es;
 
@@ -1899,9 +2156,6 @@ export default function App() {
   const [wishOpen, setWishOpen] = useState(false);
   const [navFilter, setNavFilter] = useState({ category: null, sub: null, brand: null });
   const [solidNav, setSolidNav] = useState(false);
-  // Admin session lives in the person's own (non-shared) storage, so once
-  // they log in it stays valid across reloads until they explicitly log out.
-  const [isAdmin, setIsAdmin, isAdminReady] = useStoredState("ldm-admin-session", false, false);
   const [purchasedIds, setPurchasedIds] = useStoredState("ldm-purchased", [], false);
 
   useEffect(() => {
@@ -1915,6 +2169,37 @@ export default function App() {
   }, []);
 
   useEffect(() => { window.scrollTo(0, 0); }, [page, product]);
+
+  // Browser back/forward: keep a history entry per page/product so the
+  // native arrows navigate the app instead of leaving it with nothing to go to.
+  const historyReady = useRef(false);
+  useEffect(() => {
+    const state = { page, productId: product?.id || null };
+    const current = window.history.state;
+    if (!historyReady.current) {
+      window.history.replaceState(state, "");
+      historyReady.current = true;
+      return;
+    }
+    if (!current || current.page !== state.page || current.productId !== state.productId) {
+      window.history.pushState(state, "");
+    }
+    // eslint-disable-next-line
+  }, [page, product]);
+
+  useEffect(() => {
+    const onPopState = (e) => {
+      const st = e.state || { page: "home", productId: null };
+      setPage(st.page);
+      if (st.page === "product" && st.productId) {
+        const p = products.find((pp) => pp.id === st.productId);
+        if (p) setProduct(p);
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+    // eslint-disable-next-line
+  }, [products]);
 
   const openProduct = useCallback((p) => { setProduct(p); setPage("product"); }, []);
   const navigateCategory = (category, sub) => { setNavFilter({ category, sub, brand: null }); setPage("shop"); setMenuOpen(false); };
@@ -1985,20 +2270,21 @@ export default function App() {
     return (
       <div className="ldm-root" data-theme={theme}>
         <style>{CSS}</style>
-        {!isAdminReady ? (
+        {!adminTokenReady ? (
           <div className="ldm-admin-login"><p className="ldm-admin-loading">Cargando…</p></div>
         ) : isAdmin ? (
           <AdminDashboard
             products={products} setProducts={setProducts}
             categories={categories} setCategories={setCategories}
             brands={brands} setBrands={setBrands}
+            tags={tags} setTags={setTags}
             orders={orders} setOrders={setOrders}
             currency={currency}
-            onLogout={() => setIsAdmin(false)}
+            onLogout={() => setAdminToken(null)}
             onExit={() => setPage("home")}
           />
         ) : (
-          <AdminLogin onSuccess={() => setIsAdmin(true)} onExit={() => setPage("home")} logoSrc={logoSrc} />
+          <AdminLogin onSuccess={(token) => setAdminToken(token)} onExit={() => setPage("home")} theme={theme} />
         )}
       </div>
     );
@@ -2015,7 +2301,6 @@ export default function App() {
         cartCount={cartCount}
         wishCount={wishlist.length}
         solid={solidNav || page !== "home"}
-        logoSrc={logoSrc}
         onLogo={() => setPage("home")}
         products={products}
         currency={currency}
@@ -2035,12 +2320,14 @@ export default function App() {
         currency={currency}
         setCurrency={setCurrency}
         t={t}
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
       />
 
       <main className="ldm-main">
-        {page === "home" && <Home products={products} currency={currency} setPage={setPage} openProduct={openProduct} wishlist={wishlist} toggleWish={toggleWish} t={t} />}
+        {page === "home" && <Home products={products} currency={currency} setPage={setPage} openProduct={openProduct} tags={tags} t={t} />}
         {page === "shop" && (
-          <Shop products={products} currency={currency} openProduct={openProduct} wishlist={wishlist} toggleWish={toggleWish}
+          <Shop products={products} currency={currency} openProduct={openProduct} tags={tags}
             activeCategory={navFilter.category} activeSub={navFilter.sub} activeBrand={navFilter.brand}
             categories={categories} brands={brands} t={t} />
         )}
@@ -2049,7 +2336,7 @@ export default function App() {
         )}
       </main>
 
-      <Footer setPage={setPage} logoSrc={logoSrc} t={t} theme={theme} />
+      <Footer setPage={setPage} t={t} theme={theme} />
 
       <BagDrawer open={bagOpen} onClose={() => setBagOpen(false)} cart={cart} currency={currency} updateQty={updateQty} removeItem={removeItem} setPage={setPage} t={t} />
       <WishlistDrawer open={wishOpen} onClose={() => setWishOpen(false)} products={products} wishlist={wishlist} currency={currency} toggleWish={toggleWish} openProduct={(p) => { setWishOpen(false); openProduct(p); }} t={t} />
@@ -2108,6 +2395,7 @@ const CSS = `
 .ldm-nav-icon { position: relative; padding: 6px; color: var(--fg); }
 .ldm-nav-left { display: flex; align-items: center; gap: 4px; }
 .ldm-nav-logo { display: flex; align-items: center; gap: 8px; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 15px; letter-spacing: 0.24em; }
+.ldm-nav-logo span, .ldm-logo-mark span { font-weight: 700; }
 .ldm-logomark { width: 26px; height: 26px; object-fit: contain; flex-shrink: 0; color: var(--fg); }
 .ldm-logomark--lg { width: 30px; height: 30px; }
 .ldm-nav-right { display: flex; gap: 8px; }
@@ -2138,6 +2426,8 @@ const CSS = `
 .ldm-drawer-sub { text-align: left; padding: 8px 0 8px 12px; font-size: 13px; color: var(--fg-dim); }
 .ldm-drawer-sub:hover { color: var(--fg); }
 .ldm-drawer-foot { border-top: 1px solid var(--hairline); padding-top: 18px; display: flex; flex-direction: column; gap: 16px; }
+.ldm-drawer-account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ldm-drawer-account-row .ldm-drawer-account { flex: 1; }
 .ldm-drawer-account { display: flex; justify-content: space-between; align-items: center; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; }
 .ldm-drawer-account-note { font-size: 12px; color: var(--fg-dim); margin: -6px 0 0; }
 
@@ -2196,8 +2486,8 @@ const CSS = `
 .ldm-empty-note { color: var(--fg-dim); font-size: 13px; grid-column: 1/-1; }
 .ldm-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.ldm-filter-panel { border: 1px solid var(--hairline); border-radius: 4px; padding: 14px 16px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 12px; background: var(--surface); }
-.ldm-filter-panel-row { display: flex; flex-direction: column; gap: 6px; }
+.ldm-filter-panel { border: 1px solid var(--hairline); border-radius: 4px; padding: 10px 12px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.ldm-filter-panel-row { display: flex; flex-direction: column; gap: 4px; }
 .ldm-filter-panel-row--inline { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .ldm-price-slider { width: 100%; accent-color: var(--fg); }
 .ldm-stock-check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
@@ -2238,7 +2528,8 @@ const CSS = `
 .ldm-footer-admin-link:hover { opacity: 1; color: var(--fg-dim); }
 
 /* side panels (bag/wishlist) */
-.ldm-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--bg); z-index: 220; transform: translateX(100%); transition: transform 0.4s cubic-bezier(.16,.84,.44,1); display: flex; flex-direction: column; padding: 26px 28px; overflow-y: auto; }
+.ldm-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 100vw; background: var(--bg); z-index: 220; transform: translateX(100%); transition: transform 0.4s cubic-bezier(.16,.84,.44,1); display: flex; flex-direction: column; padding: 26px max(28px, 8vw); overflow-y: auto; }
+.ldm-panel-items, .ldm-panel-summary, .ldm-checkout, .ldm-panel-empty { width: 100%; max-width: 640px; margin: 0 auto; }
 .ldm-panel.is-open { transform: translateX(0); }
 .ldm-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
 .ldm-panel-head h2 { font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 500; font-size: 20px; margin: 0; }
@@ -2338,7 +2629,7 @@ const CSS = `
 .ldm-admin-card-price { font-weight: 500; color: var(--fg); }
 .ldm-admin-card-actions { display: flex; border-top: 1px solid var(--hairline); }
 .ldm-admin-card-actions button { flex: 1; padding: 10px; font-size: 11.5px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--fg-dim); }
-.ldm-admin-card-actions button:first-child { border-right: 1px solid var(--hairline); }
+.ldm-admin-card-actions button:not(:last-child) { border-right: 1px solid var(--hairline); }
 .ldm-admin-card-actions button:hover { color: var(--fg); background: var(--surface); }
 .ldm-toggle { width: 34px; height: 18px; border-radius: 999px; background: var(--panel-3); position: relative; }
 .ldm-toggle span { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); transition: transform 0.25s ease; }
@@ -2366,6 +2657,16 @@ const CSS = `
 .ldm-admin-variant-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; align-items: center; }
 .ldm-admin-variant-row input { border: 1px solid var(--hairline); padding: 8px 10px; border-radius: 2px; font-size: 12.5px; }
 .ldm-admin-variant-row button { color: var(--fg-dim); }
+.ldm-admin-variant-row--head { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-dim); }
+.ldm-admin-attrs { display: flex; flex-direction: column; gap: 14px; margin-bottom: 12px; }
+.ldm-admin-attr-block { border: 1px solid var(--hairline); border-radius: 3px; padding: 12px 14px; }
+.ldm-admin-attr-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.ldm-admin-attr-head input { flex: 1; min-width: 140px; border: 1px solid var(--hairline); padding: 8px 10px; border-radius: 2px; font-size: 12.5px; }
+.ldm-admin-attr-head button { color: var(--fg-dim); }
+.ldm-admin-attr-head button:disabled { opacity: 0.3; cursor: not-allowed; }
+.ldm-admin-attr-required { font-size: 11.5px; white-space: nowrap; }
+.ldm-admin-sub-tag button:disabled { opacity: 0.3; cursor: not-allowed; }
+.ldm-admin-tag-edit-input { border: 1px solid var(--hairline); border-radius: 2px; padding: 3px 6px; font-size: 12px; width: 110px; }
 .ldm-admin-form-actions { display: flex; gap: 12px; justify-content: flex-end; }
 .ldm-admin-add-row { display: flex; gap: 10px; margin-bottom: 18px; }
 .ldm-admin-add-row--sm { margin-bottom: 0; margin-top: 8px; }

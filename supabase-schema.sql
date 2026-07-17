@@ -14,25 +14,23 @@ create table if not exists store_kv (
 
 alter table store_kv enable row level security;
 
--- El panel admin de esta app usa un login propio (usuario/contraseña
--- verificado en el navegador), NO Supabase Auth. Por eso, para que el panel
--- siga funcionando igual que en el prototipo, se permite leer y escribir esta
--- tabla con la clave anónima (anon).
---
--- ADVERTENCIA DE SEGURIDAD: esto significa que cualquiera que conozca tu URL
--- y tu clave anónima de Supabase podría escribir en esta tabla directamente
--- (sin pasar por el login del admin). Es el mismo nivel de seguridad que
--- tenía el prototipo original. Si en el futuro querés cerrar esto del todo,
--- lo correcto es migrar el login del admin a Supabase Auth real y restringir
--- estas políticas a "solo usuarios autenticados".
+-- Todo el mundo puede LEER (necesario para que la tienda pública muestre el
+-- catálogo, pedidos de un cliente vía su propio flujo, etc).
 create policy "anon read store_kv" on store_kv
   for select using (true);
 
+-- Las claves administrables (catálogo, categorías, marcas, etiquetas) NO se
+-- pueden escribir con la clave anónima: solo el backend (service_role, que
+-- ignora RLS) puede tocarlas, y solo lo hace después de validar el login del
+-- admin en /api/admin-login. Ver api/admin-kv.js y src/lib/storage.js.
+-- El resto de las claves compartidas (reseñas, pedidos, imágenes subidas)
+-- siguen siendo escribibles por cualquier visitante, porque las genera
+-- gente que compra o deja una reseña sin haber iniciado sesión como admin.
 create policy "anon write store_kv" on store_kv
-  for insert with check (true);
+  for insert with check (key not in ('ldm-products', 'ldm-categories', 'ldm-brands', 'ldm-tags'));
 
 create policy "anon update store_kv" on store_kv
-  for update using (true);
+  for update using (key not in ('ldm-products', 'ldm-categories', 'ldm-brands', 'ldm-tags'));
 
 create policy "anon delete store_kv" on store_kv
-  for delete using (true);
+  for delete using (key not in ('ldm-products', 'ldm-categories', 'ldm-brands', 'ldm-tags'));

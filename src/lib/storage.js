@@ -15,13 +15,15 @@ import { createClient } from "@supabase/supabase-js";
      - shared = false -> localStorage del navegador, propio de cada visitante:
                          carrito, wishlist, tema, moneda, sesión de admin.
 
-   Nota de seguridad: como el panel admin es solo un gate de usuario/contraseña
-   del lado del cliente (no autenticación real de Supabase), la tabla
-   `store_kv` permite lectura/escritura con la clave anónima para que el panel
-   siga funcionando igual que antes. Cualquiera que conozca la URL/clave de
-   Supabase podría escribir ahí directamente sin pasar por el login. Para una
-   tienda con más volumen conviene reemplazar el login del admin por Supabase
-   Auth real y mover las políticas de escritura a "solo usuarios autenticados".
+   Seguridad: las claves administrables (catálogo, categorías, marcas,
+   etiquetas — ver ADMIN_PROTECTED_KEYS en App.jsx) están protegidas por RLS
+   en Supabase: la clave anónima solo puede LEERLAS, no escribirlas. Las
+   escrituras a esas claves pasan por /api/admin-kv (adminSet/adminDelete
+   abajo), que exige un token de sesión firmado por /api/admin-login usando
+   un secreto de servidor — la contraseña de admin nunca viaja al bundle del
+   cliente. El resto de las claves compartidas (reseñas, pedidos, imágenes)
+   se siguen escribiendo con la clave anónima porque cualquier visitante
+   necesita poder crearlas.
    ============================================================================ */
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -78,4 +80,23 @@ async function del(key, shared = false) {
   return { key, deleted: true, shared };
 }
 
-export const storage = { get, set, delete: del };
+async function adminSet(key, value, token) {
+  const res = await fetch("/api/admin-kv", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ key, value }),
+  });
+  if (!res.ok) throw new Error("admin write failed");
+  return { key, value, shared: true };
+}
+
+async function adminDelete(key, token) {
+  const res = await fetch(`/api/admin-kv?key=${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("admin delete failed");
+  return { key, deleted: true, shared: true };
+}
+
+export const storage = { get, set, delete: del, adminSet, adminDelete };

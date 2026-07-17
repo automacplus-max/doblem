@@ -3,7 +3,7 @@ import {
   Menu, X, ShoppingBag, Star, ChevronDown, Plus, Minus,
   Trash2, Pencil, Check, Lock, LogOut, Eye, EyeOff, ArrowLeft, Upload, Search, SlidersHorizontal, Tag, Moon, Sun,
   Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle, ArrowUp, ArrowDown, Copy, Flame,
-  Layers, Building2, Tags, ShieldCheck, RotateCcw
+  Layers, Building2, Tags, ShieldCheck, RotateCcw, BarChart3, TrendingUp
 } from "lucide-react";
 import { storage } from "./lib/storage.js";
 import { LOGO_DARK_MARK, LOGO_LIGHT_MARK } from "./logoAssets.js";
@@ -2219,7 +2219,143 @@ const OrderManager = ({ orders, setOrders, currency }) => {
   );
 };
 
-const AdminDashboard = ({ products, setProducts, categories, setCategories, brands, setBrands, tags, setTags, orders, setOrders, currency, onLogout, onExit }) => {
+/* ============================== ESTADÍSTICAS ============================== */
+const StatCard = ({ icon: Icon, label, value, sub }) => (
+  <div className="ldm-stat-card">
+    <div className="ldm-stat-card-icon"><Icon size={16} strokeWidth={1.6} /></div>
+    <div>
+      <p className="ldm-stat-card-value">{value}</p>
+      <p className="ldm-stat-card-label">{label}</p>
+      {sub && <p className="ldm-stat-card-sub">{sub}</p>}
+    </div>
+  </div>
+);
+
+const StatsManager = ({ events, products, categories, orders, currency }) => {
+  const stats = useMemo(() => {
+    const views = events.filter((e) => e.type === "view");
+    const carts = events.filter((e) => e.type === "cart");
+
+    const countBy = (list) => list.reduce((m, e) => { m[e.productId] = (m[e.productId] || 0) + 1; return m; }, {});
+    const viewCounts = countBy(views);
+    const cartCounts = countBy(carts);
+
+    const productIds = new Set([...Object.keys(viewCounts), ...Object.keys(cartCounts)]);
+    const perProduct = [...productIds].map((id) => {
+      const product = products.find((p) => p.id === id);
+      const v = viewCounts[id] || 0;
+      const c = cartCounts[id] || 0;
+      return {
+        id,
+        name: product?.name || "(producto eliminado)",
+        category: product ? (categories.find((cat) => cat.id === product.category)?.label || product.category) : "—",
+        views: v,
+        carts: c,
+        conversion: v > 0 ? Math.round((c / v) * 100) : 0,
+      };
+    }).sort((a, b) => b.views - a.views);
+
+    const viewsByCategory = views.reduce((m, e) => {
+      const product = products.find((p) => p.id === e.productId);
+      const label = product ? (categories.find((c) => c.id === product.category)?.label || product.category) : "Otros";
+      m[label] = (m[label] || 0) + 1;
+      return m;
+    }, {});
+    const categoryRows = Object.entries(viewsByCategory).sort((a, b) => b[1] - a[1]);
+    const maxCategoryViews = Math.max(1, ...categoryRows.map(([, n]) => n));
+
+    const days = [...Array(14)].map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (13 - i));
+      return d.toISOString().slice(0, 10);
+    });
+    const viewsByDay = views.reduce((m, e) => {
+      const day = new Date(e.ts).toISOString().slice(0, 10);
+      m[day] = (m[day] || 0) + 1;
+      return m;
+    }, {});
+    const dailySeries = days.map((day) => ({ day, count: viewsByDay[day] || 0 }));
+    const maxDaily = Math.max(1, ...dailySeries.map((d) => d.count));
+
+    const revenueUsd = orders.reduce((s, o) => {
+      const rate = CURRENCIES[o.currency]?.rate || 1;
+      return s + (Number(o.subtotal) || 0) / rate;
+    }, 0);
+
+    return { totalViews: views.length, totalCarts: carts.length, perProduct, categoryRows, maxCategoryViews, dailySeries, maxDaily, revenueUsd };
+  }, [events, products, categories, orders]);
+
+  return (
+    <div className="ldm-stats">
+      <div className="ldm-stat-cards">
+        <StatCard icon={Eye} label="Vistas de producto" value={stats.totalViews.toLocaleString("es-CL")} />
+        <StatCard icon={ShoppingBag} label="Agregados al carrito" value={stats.totalCarts.toLocaleString("es-CL")}
+          sub={stats.totalViews > 0 ? `${Math.round((stats.totalCarts / stats.totalViews) * 100)}% conversión` : undefined} />
+        <StatCard icon={Package} label="Pedidos" value={orders.length.toLocaleString("es-CL")} />
+        <StatCard icon={Coins} label="Ingresos totales" value={formatPrice(stats.revenueUsd, currency)} />
+      </div>
+
+      <div className="ldm-admin-table-wrap ldm-stats-trend">
+        <div className="ldm-admin-table-head"><h2>Vistas — últimos 14 días</h2></div>
+        <div className="ldm-trend-chart">
+          {stats.dailySeries.map((d) => (
+            <div key={d.day} className="ldm-trend-bar-col" title={`${d.day}: ${d.count} vistas`}>
+              <div className="ldm-trend-bar" style={{ height: `${Math.max(4, (d.count / stats.maxDaily) * 100)}%` }} />
+              <span>{d.day.slice(8)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="ldm-admin-table-wrap">
+        <div className="ldm-admin-table-head"><h2>Productos más vistos</h2></div>
+        {stats.perProduct.length === 0 ? (
+          <p className="ldm-empty-note">Todavía no hay actividad registrada. Los datos aparecen a medida que la gente navega la tienda.</p>
+        ) : (
+          <table className="ldm-admin-table">
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Categoría</th>
+                <th>Vistas</th>
+                <th>Agregados al carrito</th>
+                <th>Conversión</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.perProduct.slice(0, 12).map((p) => (
+                <tr key={p.id}>
+                  <td>{p.name}</td>
+                  <td>{p.category}</td>
+                  <td>{p.views}</td>
+                  <td>{p.carts}</td>
+                  <td>{p.conversion}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {stats.categoryRows.length > 0 && (
+        <div className="ldm-admin-table-wrap">
+          <div className="ldm-admin-table-head"><h2>Vistas por categoría</h2></div>
+          <div className="ldm-cat-bars">
+            {stats.categoryRows.map(([label, count]) => (
+              <div className="ldm-cat-bar-row" key={label}>
+                <span className="ldm-cat-bar-label">{label}</span>
+                <div className="ldm-cat-bar-track"><div className="ldm-cat-bar-fill" style={{ width: `${(count / stats.maxCategoryViews) * 100}%` }} /></div>
+                <span className="ldm-cat-bar-count">{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AdminDashboard = ({ products, setProducts, categories, setCategories, brands, setBrands, tags, setTags, orders, setOrders, events, currency, onLogout, onExit }) => {
   const [tab, setTab] = useState("products");
   const [editing, setEditing] = useState(null);
 
@@ -2262,6 +2398,7 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
           <button className={tab === "categories" ? "is-active" : ""} onClick={() => { setTab("categories"); setEditing(null); }}><Layers size={15} strokeWidth={1.6} /> Categorías</button>
           <button className={tab === "brands" ? "is-active" : ""} onClick={() => { setTab("brands"); setEditing(null); }}><Building2 size={15} strokeWidth={1.6} /> Marcas</button>
           <button className={tab === "tags" ? "is-active" : ""} onClick={() => { setTab("tags"); setEditing(null); }}><Tags size={15} strokeWidth={1.6} /> Etiquetas</button>
+          <button className={tab === "stats" ? "is-active" : ""} onClick={() => { setTab("stats"); setEditing(null); }}><BarChart3 size={15} strokeWidth={1.6} /> Estadísticas</button>
         </nav>
         <main className="ldm-admin-main">
           {tab === "products" && (
@@ -2282,6 +2419,7 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
           {tab === "categories" && <CategoryManager categories={categories} setCategories={setCategories} />}
           {tab === "brands" && <BrandManager brands={brands} setBrands={setBrands} />}
           {tab === "tags" && <TagManager tags={tags} setTags={setTags} />}
+          {tab === "stats" && <StatsManager events={events} products={products} categories={categories} orders={orders} currency={currency} />}
         </main>
       </div>
     </div>
@@ -2307,6 +2445,13 @@ export default function App() {
   const [brands, setBrands] = useStoredState("ldm-brands", DEFAULT_BRANDS, true, adminToken);
   const [tags, setTags] = useStoredState("ldm-tags", DEFAULT_TAGS, true, adminToken);
   const [orders, setOrders] = useStoredState("ldm-orders", [], true);
+  // Lightweight anonymous analytics: every visitor can append (product views,
+  // add-to-cart), same trust model as reviews/orders. Capped so the record
+  // never grows unbounded. Read by the admin's Estadísticas tab.
+  const [events, setEvents] = useStoredState("ldm-events", [], true);
+  const logEvent = useCallback((type, productId) => {
+    setEvents((e) => [...e, { type, productId, ts: Date.now() }].slice(-5000));
+  }, [setEvents]);
 
   const t = STRINGS[lang] || STRINGS.es;
 
@@ -2385,7 +2530,14 @@ export default function App() {
   const navigateCategory = (category, sub) => { setNavFilter({ category, sub, brand: null }); setPage("shop"); setMenuOpen(false); };
   const navigateBrand = (brandId) => { setNavFilter({ category: null, sub: null, brand: brandId }); setPage("shop"); setMenuOpen(false); };
 
-  const addToCart = (item) => setCart((c) => [...c, item]);
+  // Records one "view" per product visited (keyed by id, not by object
+  // identity, so re-renders of the same product page don't double-count).
+  useEffect(() => {
+    if (page === "product" && product?.id) logEvent("view", product.id);
+    // eslint-disable-next-line
+  }, [page, product?.id]);
+
+  const addToCart = (item) => { setCart((c) => [...c, item]); logEvent("cart", item.id); };
   const updateQty = (idx, qty) => setCart((c) => c.map((it, i) => (i === idx ? { ...it, qty } : it)));
   const removeItem = (idx) => setCart((c) => c.filter((_, i) => i !== idx));
   const toggleWish = (id) => setWishlist((w) => (w.includes(id) ? w.filter((x) => x !== id) : [...w, id]));
@@ -2459,6 +2611,7 @@ export default function App() {
             brands={brands} setBrands={setBrands}
             tags={tags} setTags={setTags}
             orders={orders} setOrders={setOrders}
+            events={events}
             currency={currency}
             onLogout={() => setAdminToken(null)}
             onExit={() => setPage("home")}
@@ -2880,6 +3033,27 @@ const CSS = `
 .ldm-admin-sub-tag.is-trending .ldm-trending-toggle { color: #d0742a; }
 .ldm-drawer-brand-flame { color: #d0742a; margin-left: 4px; vertical-align: -2px; }
 .ldm-admin-tag-edit-input { border: 1px solid var(--hairline); border-radius: 2px; padding: 3px 6px; font-size: 12px; width: 110px; }
+
+/* stats */
+.ldm-stats { display: flex; flex-direction: column; gap: 20px; }
+.ldm-stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.ldm-stat-card { display: flex; align-items: flex-start; gap: 12px; background: var(--bg); border: 1px solid var(--hairline); border-radius: 10px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(16,16,16,0.04); }
+.ldm-stat-card-icon { width: 34px; height: 34px; border-radius: 8px; background: var(--surface); display: flex; align-items: center; justify-content: center; color: var(--fg-dim); flex-shrink: 0; }
+.ldm-stat-card-value { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 22px; font-weight: 500; margin: 0; }
+.ldm-stat-card-label { font-size: 11.5px; color: var(--fg-dim); margin: 2px 0 0; }
+.ldm-stat-card-sub { font-size: 10.5px; color: var(--fg-dim); opacity: 0.8; margin: 4px 0 0; }
+.ldm-stats-trend { overflow-x: auto; }
+.ldm-trend-chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 10px; }
+.ldm-trend-bar-col { flex: 1; min-width: 20px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 6px; }
+.ldm-trend-bar { width: 100%; max-width: 26px; background: var(--fg); border-radius: 3px 3px 0 0; opacity: 0.85; transition: opacity 0.15s ease; }
+.ldm-trend-bar-col:hover .ldm-trend-bar { opacity: 1; }
+.ldm-trend-bar-col span { font-size: 9.5px; color: var(--fg-dim); white-space: nowrap; }
+.ldm-cat-bars { display: flex; flex-direction: column; gap: 10px; }
+.ldm-cat-bar-row { display: grid; grid-template-columns: 140px 1fr 32px; align-items: center; gap: 12px; }
+.ldm-cat-bar-label { font-size: 12.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ldm-cat-bar-track { height: 8px; border-radius: 999px; background: var(--surface); overflow: hidden; }
+.ldm-cat-bar-fill { height: 100%; background: var(--fg); border-radius: 999px; }
+.ldm-cat-bar-count { font-size: 12px; color: var(--fg-dim); text-align: right; }
 .ldm-admin-form-actions { display: flex; gap: 12px; justify-content: flex-end; }
 .ldm-admin-add-row { display: flex; gap: 10px; margin-bottom: 18px; }
 .ldm-admin-add-row--sm { margin-bottom: 0; margin-top: 8px; }

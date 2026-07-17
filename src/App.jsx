@@ -3,7 +3,7 @@ import {
   Menu, X, ShoppingBag, Star, ChevronDown, Plus, Minus,
   Trash2, Pencil, Check, Lock, LogOut, Eye, EyeOff, ArrowLeft, Upload, Search, SlidersHorizontal, Tag, Moon, Sun,
   Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle, ArrowUp, ArrowDown, Copy, Flame,
-  Layers, Building2, Tags
+  Layers, Building2, Tags, ShieldCheck, RotateCcw
 } from "lucide-react";
 import { storage } from "./lib/storage.js";
 import { LOGO_DARK_MARK, LOGO_LIGHT_MARK } from "./logoAssets.js";
@@ -378,7 +378,7 @@ const Croquis = ({ variant = "jacket", className = "" }) => {
 };
 
 /* image plate: shows a real admin-uploaded image if present, else croquis */
-const Plate = ({ product, tone = 0, className = "", imageIndex = 0 }) => {
+const Plate = ({ product, tone = 0, className = "", imageIndex = 0, eager = false }) => {
   const tones = [
     "linear-gradient(160deg, var(--panel) 0%, var(--panel-2) 100%)",
     "linear-gradient(200deg, var(--panel-2) 0%, var(--panel) 100%)",
@@ -392,7 +392,10 @@ const Plate = ({ product, tone = 0, className = "", imageIndex = 0 }) => {
   return (
     <div className={`ldm-plate ${className}`} style={{ background: tones[tone % tones.length] }}>
       {showImg ? (
-        <img src={resolvedSrc} alt={product.name} className="ldm-plate-img" onError={() => setImgError(true)} />
+        <img
+          src={resolvedSrc} alt={product.name} className="ldm-plate-img" onError={() => setImgError(true)}
+          loading={eager ? "eager" : "lazy"} decoding="async" fetchPriority={eager ? "high" : "auto"}
+        />
       ) : (
         <Croquis variant={product?.variant || "jacket"} className="ldm-croquis" />
       )}
@@ -616,7 +619,7 @@ const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBra
 };
 
 /* ============================ PRODUCT CARD ================================ */
-const ProductCard = ({ product, currency, onOpen, tags }) => {
+const ProductCard = ({ product, currency, onOpen, tags, eager = false }) => {
   const [hovered, setHovered] = useState(false);
   const tagLabel = product.tags?.length > 0 ? (tags.find((tg) => tg.id === product.tags[0])?.label || product.tags[0]) : null;
   const stockLabel = stockBadgeLabel(fmtStock(product.variants));
@@ -629,7 +632,7 @@ const ProductCard = ({ product, currency, onOpen, tags }) => {
     >
       <div className="ldm-card-media">
         <button className="ldm-card-media-btn" onClick={() => onOpen(product)}>
-          <Plate product={product} tone={product.tone} className="ldm-card-plate" imageIndex={hovered && hasSecondImage ? 1 : 0} />
+          <Plate product={product} tone={product.tone} className="ldm-card-plate" imageIndex={hovered && hasSecondImage ? 1 : 0} eager={eager} />
           {tagLabel && <span className="ldm-card-tag">{tagLabel}</span>}
           {stockLabel && <span className="ldm-card-stock-badge">{stockLabel}</span>}
         </button>
@@ -646,10 +649,18 @@ const ProductCard = ({ product, currency, onOpen, tags }) => {
 };
 
 /* =============================== HOME ===================================== */
+const BENEFITS = [
+  { icon: Package, label: "Envíos a toda Latinoamérica" },
+  { icon: ShieldCheck, label: "Pago 100% seguro con Stripe" },
+  { icon: RotateCcw, label: "Cambios y devoluciones simples" },
+];
+
 const Home = ({ products, currency, setPage, openProduct, tags, t }) => {
   const visible = products.filter((p) => p.visible);
   const picked = visible.filter((p) => p.featured);
   const featured = (picked.length > 0 ? picked : visible).slice(0, 4);
+  const newArrivals = visible.filter((p) => p.newArrival).slice(0, 4);
+  const bestSellers = visible.filter((p) => (p.tags || []).includes("bestseller")).slice(0, 4);
   return (
     <>
       <section className="ldm-hero">
@@ -661,6 +672,12 @@ const Home = ({ products, currency, setPage, openProduct, tags, t }) => {
         </div>
       </section>
 
+      <div className="ldm-benefits">
+        {BENEFITS.map((b, i) => (
+          <span key={i}><b.icon size={16} strokeWidth={1.6} /> {b.label}</span>
+        ))}
+      </div>
+
       <section className="ldm-section">
         <Reveal className="ldm-section-head">
           <span className="ldm-eyebrow">{t.curated}</span>
@@ -669,12 +686,56 @@ const Home = ({ products, currency, setPage, openProduct, tags, t }) => {
         <div className="ldm-grid">
           {featured.map((p, i) => (
             <Reveal key={p.id} delay={i * 80}>
-              <ProductCard product={p} currency={currency} onOpen={openProduct} tags={tags} />
+              <ProductCard product={p} currency={currency} onOpen={openProduct} tags={tags} eager={i < 2} />
             </Reveal>
           ))}
         </div>
         <Reveal className="ldm-center-cta">
           <button className="ldm-btn ldm-btn--outline" onClick={() => setPage("shop")}>{t.viewFull}</button>
+        </Reveal>
+      </section>
+
+      {newArrivals.length > 0 && (
+        <section className="ldm-section ldm-section--tight">
+          <Reveal className="ldm-section-head">
+            <span className="ldm-eyebrow">Recién llegados</span>
+            <h2 className="ldm-h2">New Arrivals</h2>
+          </Reveal>
+          <div className="ldm-grid">
+            {newArrivals.map((p, i) => (
+              <Reveal key={p.id} delay={i * 80}>
+                <ProductCard product={p} currency={currency} onOpen={openProduct} tags={tags} />
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {bestSellers.length > 0 && (
+        <section className="ldm-section ldm-section--tight">
+          <Reveal className="ldm-section-head">
+            <span className="ldm-eyebrow">Lo más pedido</span>
+            <h2 className="ldm-h2">Best Sellers</h2>
+          </Reveal>
+          <div className="ldm-grid">
+            {bestSellers.map((p, i) => (
+              <Reveal key={p.id} delay={i * 80}>
+                <ProductCard product={p} currency={currency} onOpen={openProduct} tags={tags} />
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="ldm-about">
+        <Reveal className="ldm-about-inner">
+          <span className="ldm-eyebrow">La Marca</span>
+          <h2 className="ldm-h2">Diseño urbano, hecho para durar</h2>
+          <p>
+            LA DOBLE M nace de la intersección entre streetwear y sastrería: piezas con estructura,
+            materiales pensados para el uso diario y detalles que se notan de cerca. Cada colección
+            se diseña para acompañar, temporada tras temporada, sin perder identidad.
+          </p>
         </Reveal>
       </section>
     </>
@@ -925,7 +986,7 @@ const ProductPage = ({ product, currency, addToCart, wishlist, toggleWish, t, pu
   return (
     <section className="ldm-product">
       <div className="ldm-product-gallery">
-        <Plate product={product} tone={product.tone} className="ldm-product-plate" />
+        <Plate product={product} tone={product.tone} className="ldm-product-plate" eager />
         <button className={`ldm-wish-btn ldm-wish-btn--overlay ${inWish ? "is-active" : ""}`} onClick={() => toggleWish(product.id)} aria-label="Toggle favorite">
           <Star size={18} strokeWidth={1.4} fill={inWish ? "currentColor" : "none"} />
         </button>
@@ -1291,21 +1352,69 @@ const WishlistDrawer = ({ open, onClose, products, wishlist, currency, toggleWis
 };
 
 /* ================================ FOOTER ==================================== */
-const Footer = ({ setPage, t, theme }) => (
-  <footer className="ldm-footer">
-    <div className="ldm-footer-top">
-      <button className="ldm-logo-mark" onClick={() => setPage("home")}><LogoMark size="ldm-logomark--lg" theme={theme} /><span>LA DOBLE M</span></button>
-      <div className="ldm-footer-cols">
-        <div><span className="ldm-eyebrow">{t.store}</span><button onClick={() => setPage("shop")}>{t.collection}</button></div>
-        <div><span className="ldm-eyebrow">{t.customerCare}</span><button>{t.shipments}</button><button>{t.returns}</button></div>
+const POLICY_CONTENT = {
+  shipping: {
+    title: "Envíos",
+    body: [
+      "Despachamos a Chile, Argentina, Uruguay, México, Estados Unidos y Canadá.",
+      "Los tiempos de entrega y costos se calculan según el destino al finalizar la compra.",
+      "Vas a recibir un correo con el número de seguimiento apenas tu pedido sea despachado.",
+    ],
+  },
+  returns: {
+    title: "Devoluciones",
+    body: [
+      "Si tu pedido no te convence, escribinos dentro de los primeros 14 días desde que lo recibiste.",
+      "El producto debe estar sin uso, con sus etiquetas originales y en su empaque.",
+      "Una vez recibida la devolución, procesamos el reembolso o cambio a la brevedad.",
+    ],
+  },
+};
+
+const PolicyModal = ({ policyKey, onClose }) => {
+  const policy = POLICY_CONTENT[policyKey];
+  if (!policy) return null;
+  return (
+    <div className="ldm-policy-overlay" onClick={onClose}>
+      <div className="ldm-policy-card" onClick={(e) => e.stopPropagation()}>
+        <div className="ldm-panel-head">
+          <h2>{policy.title}</h2>
+          <button className="ldm-nav-icon" onClick={onClose}><X size={18} strokeWidth={1.4} /></button>
+        </div>
+        {policy.body.map((p, i) => <p key={i} className="ldm-policy-text">{p}</p>)}
       </div>
     </div>
-    <div className="ldm-footer-bottom">
-      <span>© {new Date().getFullYear()} LA DOBLE M. {t.rights}</span>
-      <button className="ldm-footer-admin-link" onClick={() => setPage("admin")}>admin</button>
-    </div>
-  </footer>
-);
+  );
+};
+
+const Footer = ({ setPage, t, theme }) => {
+  const [policyOpen, setPolicyOpen] = useState(null);
+  return (
+    <footer className="ldm-footer">
+      <div className="ldm-footer-top">
+        <button className="ldm-logo-mark" onClick={() => setPage("home")}><LogoMark size="ldm-logomark--lg" theme={theme} /><span>LA DOBLE M</span></button>
+        <div className="ldm-footer-cols">
+          <div><span className="ldm-eyebrow">{t.store}</span><button onClick={() => setPage("shop")}>{t.collection}</button></div>
+          <div>
+            <span className="ldm-eyebrow">{t.customerCare}</span>
+            <button onClick={() => setPolicyOpen("shipping")}>{t.shipments}</button>
+            <button onClick={() => setPolicyOpen("returns")}>{t.returns}</button>
+          </div>
+        </div>
+      </div>
+      <div className="ldm-footer-trust">
+        <span><ShieldCheck size={14} strokeWidth={1.6} /> Pago seguro con Stripe</span>
+        <span><Package size={14} strokeWidth={1.6} /> Envíos a toda Latinoamérica</span>
+        <span><RotateCcw size={14} strokeWidth={1.6} /> Cambios y devoluciones simples</span>
+      </div>
+      <div className="ldm-footer-bottom">
+        <span>© {new Date().getFullYear()} LA DOBLE M. {t.rights}</span>
+        <button className="ldm-footer-admin-link" onClick={() => setPage("admin")}>admin</button>
+      </div>
+      {policyOpen && <PolicyModal policyKey={policyOpen} onClose={() => setPolicyOpen(null)} />}
+    </footer>
+  );
+};
 
 /* ============================================================================
    ADMIN CMS
@@ -1422,7 +1531,7 @@ const AdminImageThumb = ({ image, onRemove }) => {
   return (
     <div className="ldm-admin-image">
       {src && !failed ? (
-        <img src={src} alt="" onError={() => setFailed(true)} />
+        <img src={src} alt="" onError={() => setFailed(true)} loading="lazy" decoding="async" />
       ) : (
         <div className="ldm-admin-image-placeholder">
           {failed ? "No se pudo cargar" : image.stored ? "Cargando…" : "Sin vista previa"}
@@ -2210,9 +2319,28 @@ export default function App() {
   const [solidNav, setSolidNav] = useState(false);
   const [purchasedIds, setPurchasedIds] = useStoredState("ldm-purchased", [], false);
 
+  // SPA SEO: title + meta description per page (real crawler support for a
+  // client-rendered app is limited without SSR, but this covers browser
+  // tabs/history and any crawler that executes JS).
   useEffect(() => {
-    try { document.title = "LA DOBLE M"; } catch (e) { /* not in a document context */ }
-  }, []);
+    try {
+      const base = "LA DOBLE M";
+      let title = base;
+      let description = "Colección de streetwear y accesorios de diseño: chaquetas, hoodies, denim y calzado. Envíos a Chile, Argentina y Latinoamérica.";
+      if (page === "shop") {
+        const cat = categories.find((c) => c.id === navFilter.category);
+        title = cat ? `${cat.label} — ${base}` : `Colección — ${base}`;
+        description = `Comprá ${cat ? cat.label.toLowerCase() : "toda la colección"} de ${base}. ${description}`;
+      } else if (page === "product" && product) {
+        title = `${product.name} — ${base}`;
+        description = product.desc || description;
+      }
+      document.title = title;
+      let meta = document.querySelector('meta[name="description"]');
+      if (!meta) { meta = document.createElement("meta"); meta.name = "description"; document.head.appendChild(meta); }
+      meta.setAttribute("content", description);
+    } catch (e) { /* not in a document context */ }
+  }, [page, product, categories, navFilter.category]);
 
   useEffect(() => {
     const onScroll = () => setSolidNav(window.scrollY > 30);
@@ -2424,8 +2552,13 @@ const CSS = `
   --panel: #1b1b1b; --panel-2: #242424; --panel-3: #2b2b2b;
 }
 .ldm-root * { box-sizing: border-box; }
-.ldm-root button, .ldm-root input, .ldm-root select, .ldm-root textarea { font-family: inherit; color: inherit; background: none; border: none; outline: none; }
-.ldm-root button { cursor: pointer; }
+/* :where() keeps this reset's specificity at zero for the element part, so any
+   later class rule (.ldm-btn--solid's background, .ldm-btn--outline's border,
+   etc.) wins on source order instead of losing to "class + element" specificity —
+   that mismatch previously made every solid/outline button render with no
+   fill/border at all (invisible in both themes). */
+.ldm-root :where(button, input, select, textarea) { font-family: inherit; color: inherit; background: none; border: none; outline: none; }
+.ldm-root :where(button) { cursor: pointer; }
 
 .ldm-eyebrow { display: block; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-dim); font-weight: 500; margin-bottom: 12px; }
 .ldm-h1, .ldm-h2 { font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
@@ -2498,9 +2631,19 @@ const CSS = `
 
 /* sections */
 .ldm-section { padding: 90px 5vw; max-width: 1440px; margin: 0 auto; }
+.ldm-section--tight { padding-top: 0; }
 .ldm-section-head { margin-bottom: 36px; }
 .ldm-center-cta { text-align: center; margin-top: 44px; }
 .ldm-main { padding-top: 62px; }
+
+.ldm-benefits { display: flex; flex-wrap: wrap; justify-content: center; gap: 32px; padding: 22px 5vw; border-bottom: 1px solid var(--hairline); }
+.ldm-benefits span { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-dim); letter-spacing: 0.02em; }
+
+.ldm-about { padding: 90px 5vw 100px; max-width: 1440px; margin: 0 auto; }
+.ldm-about-inner { max-width: 640px; margin: 0 auto; text-align: center; }
+.ldm-about-inner .ldm-eyebrow { text-align: center; }
+.ldm-about-inner h2 { margin-bottom: 20px; }
+.ldm-about-inner p { font-size: 14.5px; line-height: 1.8; color: var(--fg-dim); font-weight: 300; margin: 0; }
 
 .ldm-reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.7s cubic-bezier(.16,.84,.44,1), transform 0.7s cubic-bezier(.16,.84,.44,1); }
 .ldm-reveal.is-shown { opacity: 1; transform: translateY(0); }
@@ -2579,9 +2722,15 @@ const CSS = `
 .ldm-footer-cols { display: flex; gap: 5vw; flex-wrap: wrap; }
 .ldm-footer-cols > div { display: flex; flex-direction: column; gap: 8px; }
 .ldm-footer-cols button { text-align: left; font-size: 12.5px; color: var(--fg-dim); width: fit-content; }
+.ldm-footer-trust { display: flex; flex-wrap: wrap; gap: 20px; padding: 18px 0; border-top: 1px solid var(--hairline); margin-bottom: 4px; }
+.ldm-footer-trust span { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg-dim); }
 .ldm-footer-bottom { font-size: 11px; color: var(--fg-dim); padding-top: 18px; border-top: 1px solid var(--hairline); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .ldm-footer-admin-link { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hairline); opacity: 0.5; }
 .ldm-footer-admin-link:hover { opacity: 1; color: var(--fg-dim); }
+
+.ldm-policy-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 400; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.ldm-policy-card { background: var(--bg); border-radius: 8px; max-width: 460px; width: 100%; max-height: 80vh; overflow-y: auto; padding: 26px 28px; }
+.ldm-policy-text { font-size: 13.5px; line-height: 1.7; color: var(--fg-dim); margin: 0 0 14px; }
 
 /* side panels (bag/wishlist) */
 .ldm-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 100vw; background: var(--bg); z-index: 220; transform: translateX(100%); transition: transform 0.4s cubic-bezier(.16,.84,.44,1); display: flex; flex-direction: column; padding: 26px max(28px, 8vw); overflow-y: auto; }
@@ -2799,11 +2948,22 @@ const CSS = `
   .ldm-admin-tabs { width: 100%; flex-direction: row; border-right: none; border-bottom: 1px solid var(--hairline); }
 }
 @media (max-width: 620px) {
-  .ldm-grid { grid-template-columns: 1fr; }
-  .ldm-section { padding: 60px 6vw; }
+  .ldm-grid { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .ldm-section { padding: 50px 6vw; }
+  .ldm-benefits { padding: 16px 6vw; gap: 16px 24px; }
   .ldm-admin-variant-row { grid-template-columns: 1fr 1fr 1fr auto; }
   .ldm-admin-form-grid { grid-template-columns: 1fr; }
   .ldm-checkout-grid { grid-template-columns: 1fr; }
   .ldm-panel { padding: 22px 18px; }
+  /* larger touch targets on mobile — icons alone are ~18-20px, well under the
+     44px accessibility guideline once you factor in real thumb precision */
+  .ldm-nav-icon { padding: 11px; }
+  .ldm-chip { padding: 9px 14px; }
+  .ldm-chip--sm { padding: 9px 12px; }
+  .ldm-qty-stepper button { padding: 6px; }
+  .ldm-drawer-sub, .ldm-drawer-cat-head { padding-top: 14px; padding-bottom: 14px; }
+  .ldm-card-info { gap: 6px; }
+  .ldm-footer-top { gap: 32px; }
+  .ldm-footer-cols { gap: 32px; }
 }
 `;

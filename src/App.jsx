@@ -3,7 +3,7 @@ import {
   Menu, X, ShoppingBag, Star, ChevronDown, Plus, Minus,
   Trash2, Pencil, Check, Lock, LogOut, Eye, EyeOff, ArrowLeft, Upload, Search, SlidersHorizontal, Tag, Moon, Sun,
   Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle, ArrowUp, ArrowDown, Copy, Flame,
-  Layers, Building2, Tags, ShieldCheck, RotateCcw, BarChart3, TrendingUp
+  Layers, Building2, Tags, ShieldCheck, RotateCcw, BarChart3, TrendingUp, BadgeCheck, Sparkles
 } from "lucide-react";
 import { storage } from "./lib/storage.js";
 import { LOGO_DARK_MARK, LOGO_LIGHT_MARK } from "./logoAssets.js";
@@ -655,6 +655,12 @@ const BENEFITS = [
   { icon: RotateCcw, label: "Cambios y devoluciones simples" },
 ];
 
+const QUALITY_POINTS = [
+  { icon: BadgeCheck, title: "100% Originales", text: "Cada pieza de marca que vendemos pasa por un proceso de verificación de autenticidad antes de publicarse." },
+  { icon: Sparkles, title: "Inspección de calidad", text: "Revisamos costuras, materiales y terminaciones de cada producto antes de despacharlo." },
+  { icon: ShieldCheck, title: "Empaque protegido", text: "Tu pedido viaja embalado con cuidado para que llegue en las mismas condiciones en que salió." },
+];
+
 const Home = ({ products, currency, setPage, openProduct, tags, t }) => {
   const visible = products.filter((p) => p.visible);
   const picked = visible.filter((p) => p.featured);
@@ -726,6 +732,34 @@ const Home = ({ products, currency, setPage, openProduct, tags, t }) => {
           </div>
         </section>
       )}
+
+      <section className="ldm-section ldm-quality">
+        <div className="ldm-quality-showcase">
+          <Reveal className="ldm-quality-photos">
+            <img src="/quality-1.jpg" alt="Producto de marca verificado" loading="lazy" decoding="async" />
+            <img src="/quality-2.jpg" alt="Empaque original protegido" loading="lazy" decoding="async" />
+          </Reveal>
+          <Reveal className="ldm-quality-copy">
+            <span className="ldm-eyebrow">Compromiso de Calidad</span>
+            <h2 className="ldm-h2">Cada pieza, verificada</h2>
+            <p>
+              Trabajamos solo con piezas de marca originales, revisadas antes de despacharse y
+              enviadas en su empaque de fábrica. LA DOBLE M no está afiliada ni asociada con
+              ninguna de las marcas que comercializa.
+            </p>
+            <button className="ldm-btn ldm-btn--outline" onClick={() => setPage("shop")}>Ver la Colección</button>
+          </Reveal>
+        </div>
+        <div className="ldm-quality-grid">
+          {QUALITY_POINTS.map((q, i) => (
+            <Reveal key={i} delay={i * 80} className="ldm-quality-card">
+              <q.icon size={22} strokeWidth={1.4} />
+              <h3>{q.title}</h3>
+              <p>{q.text}</p>
+            </Reveal>
+          ))}
+        </div>
+      </section>
 
       <section className="ldm-about">
         <Reveal className="ldm-about-inner">
@@ -2798,6 +2832,18 @@ const CSS = `
 .ldm-about-inner h2 { margin-bottom: 20px; }
 .ldm-about-inner p { font-size: 14.5px; line-height: 1.8; color: var(--fg-dim); font-weight: 300; margin: 0; }
 
+.ldm-quality { padding-top: 0; }
+.ldm-quality-showcase { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 6vw; align-items: center; margin-bottom: 80px; }
+.ldm-quality-photos { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.ldm-quality-photos img { width: 100%; height: 100%; object-fit: cover; aspect-ratio: 3/4; border-radius: 2px; }
+.ldm-quality-photos img:first-child { margin-top: 32px; }
+.ldm-quality-copy p { font-size: 14px; line-height: 1.75; color: var(--fg-dim); font-weight: 300; margin: 18px 0 28px; }
+.ldm-quality-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 32px; }
+.ldm-quality-card { text-align: center; padding: 0 12px; }
+.ldm-quality-card svg { color: var(--fg-dim); margin-bottom: 14px; }
+.ldm-quality-card h3 { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 15px; font-weight: 500; margin: 0 0 8px; }
+.ldm-quality-card p { font-size: 12.5px; line-height: 1.6; color: var(--fg-dim); margin: 0; font-weight: 300; }
+
 .ldm-reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.7s cubic-bezier(.16,.84,.44,1), transform 0.7s cubic-bezier(.16,.84,.44,1); }
 .ldm-reveal.is-shown { opacity: 1; transform: translateY(0); }
 
@@ -3120,6 +3166,8 @@ const CSS = `
   .ldm-admin-form-grid { grid-template-columns: 1fr; }
   .ldm-admin-body { flex-direction: column; }
   .ldm-admin-tabs { width: 100%; flex-direction: row; border-right: none; border-bottom: 1px solid var(--hairline); }
+  .ldm-quality-showcase { grid-template-columns: 1fr; gap: 30px; margin-bottom: 50px; }
+  .ldm-quality-photos img:first-child { margin-top: 0; }
 }
 @media (max-width: 620px) {
   .ldm-grid { grid-template-columns: repeat(2, 1fr); gap: 14px; }

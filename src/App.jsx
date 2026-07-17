@@ -394,7 +394,7 @@ const Plate = ({ product, tone = 0, className = "", imageIndex = 0, eager = fals
       {showImg ? (
         <img
           src={resolvedSrc} alt={product.name} className="ldm-plate-img" onError={() => setImgError(true)}
-          loading={eager ? "eager" : "lazy"} decoding="async" fetchPriority={eager ? "high" : "auto"}
+          loading={eager ? "eager" : "lazy"} decoding="async" fetchpriority={eager ? "high" : "auto"}
         />
       ) : (
         <Croquis variant={product?.variant || "jacket"} className="ldm-croquis" />
@@ -2725,8 +2725,8 @@ const CSS = `
 .ldm-footer-trust { display: flex; flex-wrap: wrap; gap: 20px; padding: 18px 0; border-top: 1px solid var(--hairline); margin-bottom: 4px; }
 .ldm-footer-trust span { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg-dim); }
 .ldm-footer-bottom { font-size: 11px; color: var(--fg-dim); padding-top: 18px; border-top: 1px solid var(--hairline); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.ldm-footer-admin-link { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hairline); opacity: 0.5; }
-.ldm-footer-admin-link:hover { opacity: 1; color: var(--fg-dim); }
+.ldm-footer-admin-link { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-dim); opacity: 0.75; }
+.ldm-footer-admin-link:hover { opacity: 1; color: var(--fg); }
 
 .ldm-policy-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 400; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .ldm-policy-card { background: var(--bg); border-radius: 8px; max-width: 460px; width: 100%; max-height: 80vh; overflow-y: auto; padding: 26px 28px; }

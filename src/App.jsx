@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   Menu, X, ShoppingBag, Star, ChevronDown, Plus, Minus,
   Trash2, Pencil, Check, Lock, LogOut, Eye, EyeOff, ArrowLeft, Upload, Search, SlidersHorizontal, Tag, Moon, Sun,
-  Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle, ArrowUp, ArrowDown, Copy
+  Package, Pin, ArrowUpDown, Mail, Phone, MapPin, CreditCard, Globe2, Send, Coins, AlertCircle, ArrowUp, ArrowDown, Copy, Flame,
+  Layers, Building2, Tags
 } from "lucide-react";
 import { storage } from "./lib/storage.js";
 import { LOGO_DARK_MARK, LOGO_LIGHT_MARK } from "./logoAssets.js";
@@ -377,13 +378,13 @@ const Croquis = ({ variant = "jacket", className = "" }) => {
 };
 
 /* image plate: shows a real admin-uploaded image if present, else croquis */
-const Plate = ({ product, tone = 0, className = "" }) => {
+const Plate = ({ product, tone = 0, className = "", imageIndex = 0 }) => {
   const tones = [
     "linear-gradient(160deg, var(--panel) 0%, var(--panel-2) 100%)",
     "linear-gradient(200deg, var(--panel-2) 0%, var(--panel) 100%)",
     "linear-gradient(135deg, var(--panel-3) 0%, var(--panel-2) 100%)",
   ];
-  const img = product?.images?.[0];
+  const img = product?.images?.[imageIndex] || product?.images?.[0];
   const resolvedSrc = useResolvedImageSrc(img);
   const [imgError, setImgError] = useState(false);
   useEffect(() => { setImgError(false); }, [resolvedSrc]);
@@ -446,6 +447,14 @@ const DEFAULT_PRODUCTS = [
 ];
 
 const fmtStock = (variants) => variants.reduce((s, v) => s + Number(v.stock || 0), 0);
+// Customers never see the raw stock number (3 vs 900 shouldn't matter) — only
+// a qualitative low-stock nudge when it's genuinely about to sell out.
+const stockBadgeLabel = (stock) => {
+  if (stock === 1) return "ÚLTIMA UNIDAD";
+  if (stock === 2) return "ÚLTIMAS 2 UNIDADES";
+  if (stock > 0 && stock <= 5) return "QUEDAN POCOS";
+  return null;
+};
 const DEFAULT_TAGS = [
   { id: "trending", label: "Trending" },
   { id: "new-season", label: "New Season" },
@@ -526,7 +535,7 @@ const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBra
   const [expanded, setExpanded] = useState(null);
   const [accountOpen, setAccountOpen] = useState(false);
 
-  useEffect(() => { if (!open) { setAccountOpen(false); } }, [open]);
+  useEffect(() => { if (!open) { setAccountOpen(false); setExpanded(null); } }, [open]);
 
   return (
     <>
@@ -547,7 +556,9 @@ const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBra
               {expanded === "__brands" && (
                 <div className="ldm-drawer-subs">
                   {brands.map((b) => (
-                    <button key={b.id} className="ldm-drawer-sub" onClick={() => onNavigateBrand(b.id)}>{b.label}</button>
+                    <button key={b.id} className="ldm-drawer-sub" onClick={() => onNavigateBrand(b.id)}>
+                      {b.label}{b.trending && <Flame size={12} strokeWidth={1.8} fill="currentColor" className="ldm-drawer-brand-flame" />}
+                    </button>
                   ))}
                 </div>
               )}
@@ -606,13 +617,21 @@ const SideMenu = ({ open, onClose, categories, brands, onNavigate, onNavigateBra
 
 /* ============================ PRODUCT CARD ================================ */
 const ProductCard = ({ product, currency, onOpen, tags }) => {
+  const [hovered, setHovered] = useState(false);
   const tagLabel = product.tags?.length > 0 ? (tags.find((tg) => tg.id === product.tags[0])?.label || product.tags[0]) : null;
+  const stockLabel = stockBadgeLabel(fmtStock(product.variants));
+  const hasSecondImage = (product.images || []).length > 1;
   return (
-    <div className="ldm-card">
+    <div
+      className={`ldm-card ${hovered ? "is-hovered" : ""}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className="ldm-card-media">
         <button className="ldm-card-media-btn" onClick={() => onOpen(product)}>
-          <Plate product={product} tone={product.tone} className="ldm-card-plate" />
+          <Plate product={product} tone={product.tone} className="ldm-card-plate" imageIndex={hovered && hasSecondImage ? 1 : 0} />
           {tagLabel && <span className="ldm-card-tag">{tagLabel}</span>}
+          {stockLabel && <span className="ldm-card-stock-badge">{stockLabel}</span>}
         </button>
       </div>
       <button className="ldm-card-info" onClick={() => onOpen(product)}>
@@ -939,7 +958,7 @@ const ProductPage = ({ product, currency, addToCart, wishlist, toggleWish, t, pu
           </div>
         ))}
 
-        {allChosen && stock > 0 && stock <= 5 && <span className="ldm-size-warn ldm-size-warn--low">{t.left(stock)}</span>}
+        {allChosen && stockBadgeLabel(stock) && <span className="ldm-size-warn ldm-size-warn--low">{stockBadgeLabel(stock)}</span>}
 
         <div className="ldm-variant-block ldm-qty-row">
           <span className="ldm-variant-label">{t.qty}</span>
@@ -1573,7 +1592,7 @@ const ProductForm = ({ product, categories, brands, tags, onSave, onCancel }) =>
           ))}
         </div>
         <div className="ldm-admin-image-add">
-          <input placeholder="Pegar URL de imagen" value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} />
+          <input placeholder="Pegar URL de imagen" value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { addImageUrl(urlDraft); setUrlDraft(""); } }} />
           <button className="ldm-btn ldm-btn--outline" onClick={() => { addImageUrl(urlDraft); setUrlDraft(""); }}>Añadir URL</button>
           <button className="ldm-btn ldm-btn--outline" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
             <Upload size={13} strokeWidth={1.4} /> {uploading ? "Subiendo…" : "Subir"}
@@ -1729,7 +1748,7 @@ const CategoryManager = ({ categories, setCategories }) => {
     <div className="ldm-admin-table-wrap">
       <div className="ldm-admin-table-head"><h2>Categorías</h2></div>
       <div className="ldm-admin-add-row">
-        <input placeholder="Nueva categoría" value={newCat} onChange={(e) => setNewCat(e.target.value)} />
+        <input placeholder="Nueva categoría" value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addCategory(); }} />
         <button className="ldm-btn ldm-btn--solid" onClick={addCategory}><Plus size={13} strokeWidth={1.6} /> Añadir Categoría</button>
       </div>
       <div className="ldm-admin-cats">
@@ -1750,7 +1769,7 @@ const CategoryManager = ({ categories, setCategories }) => {
               ))}
             </div>
             <div className="ldm-admin-add-row ldm-admin-add-row--sm">
-              <input placeholder="Nueva subcategoría" value={subDrafts[cat.id] || ""} onChange={(e) => setSubDrafts((d) => ({ ...d, [cat.id]: e.target.value }))} />
+              <input placeholder="Nueva subcategoría" value={subDrafts[cat.id] || ""} onChange={(e) => setSubDrafts((d) => ({ ...d, [cat.id]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") addSub(cat.id); }} />
               <button className="ldm-btn ldm-btn--outline" onClick={() => addSub(cat.id)}>Añadir</button>
             </div>
           </div>
@@ -1760,11 +1779,17 @@ const CategoryManager = ({ categories, setCategories }) => {
   );
 };
 
+const MAX_TRENDING_BRANDS = 3;
+
 const BrandManager = ({ brands, setBrands }) => {
   const [newBrand, setNewBrand] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState("");
+  const trendingCount = brands.filter((b) => b.trending).length;
+
   const addBrand = () => {
     if (!newBrand.trim()) return;
-    const id = newBrand.trim().toLowerCase().replace(/\s+/g, "-");
+    const id = `brand${Date.now()}`;
     setBrands((b) => [...b, { id, label: newBrand.trim() }].sort((x, y) => x.label.localeCompare(y.label, "es")));
     setNewBrand("");
   };
@@ -1777,6 +1802,17 @@ const BrandManager = ({ brands, setBrands }) => {
     [arr[idx], arr[j]] = [arr[j], arr[idx]];
     return arr;
   });
+  const toggleTrending = (id) => setBrands((b) => b.map((br) => {
+    if (br.id !== id) return br;
+    if (!br.trending && trendingCount >= MAX_TRENDING_BRANDS) return br;
+    return { ...br, trending: !br.trending };
+  }));
+  const startEdit = (b) => { setEditingId(b.id); setEditValue(b.label); };
+  const saveEdit = () => {
+    setBrands((b) => b.map((br) => (br.id === editingId ? { ...br, label: editValue.trim() || br.label } : br)));
+    setEditingId(null);
+  };
+
   return (
     <div className="ldm-admin-table-wrap">
       <div className="ldm-admin-table-head">
@@ -1784,17 +1820,33 @@ const BrandManager = ({ brands, setBrands }) => {
         <button className="ldm-btn ldm-btn--outline" onClick={sortAlpha}>Ordenar A-Z</button>
       </div>
       <div className="ldm-admin-add-row">
-        <input placeholder="Nueva marca" value={newBrand} onChange={(e) => setNewBrand(e.target.value)} />
+        <input placeholder="Nueva marca" value={newBrand} onChange={(e) => setNewBrand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addBrand(); }} />
         <button className="ldm-btn ldm-btn--solid" onClick={addBrand}><Plus size={13} strokeWidth={1.6} /> Añadir Marca</button>
       </div>
+      <p className="ldm-admin-hint"><Flame size={12} strokeWidth={1.8} /> Marcá hasta {MAX_TRENDING_BRANDS} marcas como tendencia ({trendingCount}/{MAX_TRENDING_BRANDS})</p>
       <div className="ldm-admin-subs">
         {brands.map((b, bi) => (
-          <span key={b.id} className="ldm-admin-sub-tag">
-            {b.label}
-            <button onClick={() => moveBrand(bi, -1)} disabled={bi === 0} aria-label="Mover antes"><ArrowUp size={11} strokeWidth={1.6} /></button>
-            <button onClick={() => moveBrand(bi, 1)} disabled={bi === brands.length - 1} aria-label="Mover después"><ArrowDown size={11} strokeWidth={1.6} /></button>
-            <button onClick={() => deleteBrand(b.id)}><X size={11} strokeWidth={1.6} /></button>
-          </span>
+          editingId === b.id ? (
+            <span key={b.id} className="ldm-admin-sub-tag">
+              <input className="ldm-admin-tag-edit-input" value={editValue} onChange={(e) => setEditValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); }} autoFocus />
+              <button onClick={saveEdit}><Check size={11} strokeWidth={1.8} /></button>
+            </span>
+          ) : (
+            <span key={b.id} className={`ldm-admin-sub-tag ${b.trending ? "is-trending" : ""}`}>
+              <button
+                className="ldm-trending-toggle"
+                onClick={() => toggleTrending(b.id)}
+                disabled={!b.trending && trendingCount >= MAX_TRENDING_BRANDS}
+                aria-label="Marcar como tendencia"
+                title="Marcar como tendencia"
+              ><Flame size={12} strokeWidth={1.8} fill={b.trending ? "currentColor" : "none"} /></button>
+              {b.label}
+              <button onClick={() => startEdit(b)} aria-label="Editar marca"><Pencil size={11} strokeWidth={1.6} /></button>
+              <button onClick={() => moveBrand(bi, -1)} disabled={bi === 0} aria-label="Mover antes"><ArrowUp size={11} strokeWidth={1.6} /></button>
+              <button onClick={() => moveBrand(bi, 1)} disabled={bi === brands.length - 1} aria-label="Mover después"><ArrowDown size={11} strokeWidth={1.6} /></button>
+              <button onClick={() => deleteBrand(b.id)}><X size={11} strokeWidth={1.6} /></button>
+            </span>
+          )
         ))}
         {brands.length === 0 && <p className="ldm-empty-note">Aún no hay marcas.</p>}
       </div>
@@ -2096,11 +2148,11 @@ const AdminDashboard = ({ products, setProducts, categories, setCategories, bran
       </header>
       <div className="ldm-admin-body">
         <nav className="ldm-admin-tabs">
-          <button className={tab === "products" ? "is-active" : ""} onClick={() => { setTab("products"); setEditing(null); }}>Productos</button>
-          <button className={tab === "orders" ? "is-active" : ""} onClick={() => { setTab("orders"); setEditing(null); }}>Pedidos</button>
-          <button className={tab === "categories" ? "is-active" : ""} onClick={() => { setTab("categories"); setEditing(null); }}>Categorías</button>
-          <button className={tab === "brands" ? "is-active" : ""} onClick={() => { setTab("brands"); setEditing(null); }}>Marcas</button>
-          <button className={tab === "tags" ? "is-active" : ""} onClick={() => { setTab("tags"); setEditing(null); }}>Etiquetas</button>
+          <button className={tab === "products" ? "is-active" : ""} onClick={() => { setTab("products"); setEditing(null); }}><Package size={15} strokeWidth={1.6} /> Productos</button>
+          <button className={tab === "orders" ? "is-active" : ""} onClick={() => { setTab("orders"); setEditing(null); }}><ShoppingBag size={15} strokeWidth={1.6} /> Pedidos</button>
+          <button className={tab === "categories" ? "is-active" : ""} onClick={() => { setTab("categories"); setEditing(null); }}><Layers size={15} strokeWidth={1.6} /> Categorías</button>
+          <button className={tab === "brands" ? "is-active" : ""} onClick={() => { setTab("brands"); setEditing(null); }}><Building2 size={15} strokeWidth={1.6} /> Marcas</button>
+          <button className={tab === "tags" ? "is-active" : ""} onClick={() => { setTab("tags"); setEditing(null); }}><Tags size={15} strokeWidth={1.6} /> Etiquetas</button>
         </nav>
         <main className="ldm-admin-main">
           {tab === "products" && (
@@ -2390,11 +2442,11 @@ const CSS = `
 .ldm-full { width: 100%; }
 
 /* top nav */
-.ldm-nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; display: flex; align-items: center; justify-content: space-between; padding: 18px 5vw; background: var(--bg); border-bottom: 1px solid transparent; transition: all 0.4s ease; }
+.ldm-nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; display: flex; align-items: center; justify-content: space-between; padding: 18px clamp(16px, 3vw, 40px); background: var(--bg); border-bottom: 1px solid transparent; transition: all 0.4s ease; }
 .ldm-nav--solid { border-bottom-color: var(--hairline); }
 .ldm-nav-icon { position: relative; padding: 6px; color: var(--fg); }
 .ldm-nav-left { display: flex; align-items: center; gap: 4px; }
-.ldm-nav-logo { display: flex; align-items: center; gap: 8px; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 15px; letter-spacing: 0.24em; }
+.ldm-nav-logo { display: flex; align-items: center; gap: 8px; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 15px; letter-spacing: 0.06em; }
 .ldm-nav-logo span, .ldm-logo-mark span { font-weight: 700; }
 .ldm-logomark { width: 26px; height: 26px; object-fit: contain; flex-shrink: 0; color: var(--fg); }
 .ldm-logomark--lg { width: 30px; height: 30px; }
@@ -2461,11 +2513,13 @@ const CSS = `
 
 /* grid & cards */
 .ldm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
-.ldm-card { position: relative; text-align: left; }
-.ldm-card-media { display: block; width: 100%; position: relative; margin-bottom: 12px; }
+.ldm-card { position: relative; text-align: left; transition: transform 0.35s cubic-bezier(.16,.84,.44,1); }
+.ldm-card.is-hovered { transform: scale(1.035); z-index: 2; }
+.ldm-card-media { display: block; width: 100%; position: relative; margin-bottom: 12px; overflow: hidden; border-radius: 2px; }
 .ldm-card-media-btn { display: block; width: 100%; }
 .ldm-card-plate { width: 100%; }
 .ldm-card-tag { position: absolute; top: 10px; left: 10px; background: var(--bg); color: var(--fg); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 9px; border-radius: 999px; border: 1px solid var(--hairline); }
+.ldm-card-stock-badge { position: absolute; top: 10px; right: 10px; background: var(--fg); color: var(--bg); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 9px; border-radius: 999px; }
 .ldm-card-wish { position: absolute; top: 10px; right: 10px; background: var(--bg); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; color: var(--fg); opacity: 0.85; }
 .ldm-card-wish.is-active { color: var(--fg); }
 .ldm-card-info { width: 100%; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; text-align: left; }
@@ -2486,8 +2540,10 @@ const CSS = `
 .ldm-empty-note { color: var(--fg-dim); font-size: 13px; grid-column: 1/-1; }
 .ldm-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.ldm-filter-panel { border: 1px solid var(--hairline); border-radius: 4px; padding: 10px 12px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
-.ldm-filter-panel-row { display: flex; flex-direction: column; gap: 4px; }
+.ldm-filter-panel { border: 1px solid var(--hairline); border-radius: 4px; padding: 8px 10px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 5px; background: var(--surface); }
+.ldm-filter-panel-row { display: flex; flex-direction: column; gap: 3px; }
+.ldm-filter-panel .ldm-chip--sm { padding: 4px 9px; font-size: 11px; }
+.ldm-filter-panel .ldm-variant-label { margin-bottom: 3px; font-size: 10px; }
 .ldm-filter-panel-row--inline { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .ldm-price-slider { width: 100%; accent-color: var(--fg); }
 .ldm-stock-check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
@@ -2519,7 +2575,7 @@ const CSS = `
 /* footer */
 .ldm-footer { border-top: 1px solid var(--hairline); padding: 60px 5vw 24px; max-width: 1440px; margin: 0 auto; }
 .ldm-footer-top { display: flex; justify-content: space-between; gap: 6vw; flex-wrap: wrap; margin-bottom: 40px; }
-.ldm-logo-mark { display: flex; align-items: center; gap: 10px; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 16px; letter-spacing: 0.2em; }
+.ldm-logo-mark { display: flex; align-items: center; gap: 10px; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 16px; letter-spacing: 0.06em; }
 .ldm-footer-cols { display: flex; gap: 5vw; flex-wrap: wrap; }
 .ldm-footer-cols > div { display: flex; flex-direction: column; gap: 8px; }
 .ldm-footer-cols button { text-align: left; font-size: 12.5px; color: var(--fg-dim); width: fit-content; }
@@ -2598,17 +2654,19 @@ const CSS = `
 .ldm-admin-loading { font-size: 13px; color: var(--fg-dim); letter-spacing: 0.06em; text-transform: uppercase; }
 
 .ldm-admin { min-height: 100vh; background: var(--surface); }
-.ldm-admin-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 30px; background: var(--bg); border-bottom: 1px solid var(--hairline); }
-.ldm-admin-header-actions { display: flex; gap: 22px; }
+.ldm-admin-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 32px; background: var(--bg); border-bottom: 1px solid var(--hairline); position: sticky; top: 0; z-index: 10; }
+.ldm-admin-header-actions { display: flex; gap: 24px; }
+.ldm-admin-header .ldm-logo-mark { border: none; padding: 0; }
 .ldm-admin-body { display: flex; min-height: calc(100vh - 65px); }
-.ldm-admin-tabs { width: 200px; background: var(--bg); border-right: 1px solid var(--hairline); padding: 20px 0; display: flex; flex-direction: column; }
-.ldm-admin-tabs button { text-align: left; padding: 12px 24px; font-size: 13px; color: var(--fg-dim); }
-.ldm-admin-tabs button.is-active { color: var(--fg); background: var(--surface); font-weight: 500; }
-.ldm-admin-main { flex: 1; padding: 30px; }
+.ldm-admin-tabs { width: 210px; flex-shrink: 0; background: var(--bg); border-right: 1px solid var(--hairline); padding: 18px 12px; display: flex; flex-direction: column; gap: 3px; }
+.ldm-admin-tabs button { display: flex; align-items: center; gap: 10px; text-align: left; padding: 10px 14px; font-size: 13px; color: var(--fg-dim); border-radius: 6px; transition: background 0.15s ease, color 0.15s ease; }
+.ldm-admin-tabs button:hover { background: var(--surface); color: var(--fg); }
+.ldm-admin-tabs button.is-active { color: var(--bg); background: var(--fg); font-weight: 500; }
+.ldm-admin-main { flex: 1; padding: 32px; max-width: 1240px; }
 
-.ldm-admin-table-wrap { background: var(--bg); border: 1px solid var(--hairline); border-radius: 4px; padding: 24px; }
-.ldm-admin-table-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-.ldm-admin-table-head h2 { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 18px; font-weight: 500; margin: 0; }
+.ldm-admin-table-wrap { background: var(--bg); border: 1px solid var(--hairline); border-radius: 10px; padding: 26px 28px; box-shadow: 0 1px 3px rgba(16,16,16,0.04); }
+.ldm-admin-table-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }
+.ldm-admin-table-head h2 { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 19px; font-weight: 500; margin: 0; }
 .ldm-admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ldm-admin-table th { text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-dim); padding: 10px 8px; border-bottom: 1px solid var(--hairline); }
 .ldm-admin-table td { padding: 10px 8px; border-bottom: 1px solid var(--hairline); vertical-align: middle; }
@@ -2618,7 +2676,8 @@ const CSS = `
 .ldm-admin-actions button:hover { color: var(--fg); }
 
 .ldm-admin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; }
-.ldm-admin-card { border: 1px solid var(--hairline); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); }
+.ldm-admin-card { border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); transition: box-shadow 0.2s ease; }
+.ldm-admin-card:hover { box-shadow: 0 4px 14px rgba(16,16,16,0.08); }
 .ldm-admin-card-media { position: relative; }
 .ldm-admin-card-plate { width: 100%; aspect-ratio: 4/5; }
 .ldm-admin-card-toggle { position: absolute; top: 8px; right: 8px; background: var(--bg); box-shadow: 0 0 0 1px var(--hairline); }
@@ -2636,7 +2695,7 @@ const CSS = `
 .ldm-toggle.is-on { background: var(--fg); }
 .ldm-toggle.is-on span { transform: translateX(16px); background: var(--bg); }
 
-.ldm-admin-form { background: var(--bg); border: 1px solid var(--hairline); border-radius: 4px; padding: 26px; }
+.ldm-admin-form { background: var(--bg); border: 1px solid var(--hairline); border-radius: 10px; padding: 28px 30px; box-shadow: 0 1px 3px rgba(16,16,16,0.04); }
 .ldm-admin-form-head h2 { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 18px; margin: 0 0 20px; }
 .ldm-admin-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 26px; }
 .ldm-admin-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); }
@@ -2659,20 +2718,25 @@ const CSS = `
 .ldm-admin-variant-row button { color: var(--fg-dim); }
 .ldm-admin-variant-row--head { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-dim); }
 .ldm-admin-attrs { display: flex; flex-direction: column; gap: 14px; margin-bottom: 12px; }
-.ldm-admin-attr-block { border: 1px solid var(--hairline); border-radius: 3px; padding: 12px 14px; }
+.ldm-admin-attr-block { border: 1px solid var(--hairline); border-radius: 8px; padding: 14px 16px; background: var(--surface); }
 .ldm-admin-attr-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .ldm-admin-attr-head input { flex: 1; min-width: 140px; border: 1px solid var(--hairline); padding: 8px 10px; border-radius: 2px; font-size: 12.5px; }
 .ldm-admin-attr-head button { color: var(--fg-dim); }
 .ldm-admin-attr-head button:disabled { opacity: 0.3; cursor: not-allowed; }
 .ldm-admin-attr-required { font-size: 11.5px; white-space: nowrap; }
 .ldm-admin-sub-tag button:disabled { opacity: 0.3; cursor: not-allowed; }
+.ldm-admin-hint { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--fg-dim); margin: -8px 0 12px; }
+.ldm-trending-toggle { color: var(--fg-dim); }
+.ldm-admin-sub-tag.is-trending { background: color-mix(in srgb, var(--fg) 10%, var(--surface)); }
+.ldm-admin-sub-tag.is-trending .ldm-trending-toggle { color: #d0742a; }
+.ldm-drawer-brand-flame { color: #d0742a; margin-left: 4px; vertical-align: -2px; }
 .ldm-admin-tag-edit-input { border: 1px solid var(--hairline); border-radius: 2px; padding: 3px 6px; font-size: 12px; width: 110px; }
 .ldm-admin-form-actions { display: flex; gap: 12px; justify-content: flex-end; }
 .ldm-admin-add-row { display: flex; gap: 10px; margin-bottom: 18px; }
 .ldm-admin-add-row--sm { margin-bottom: 0; margin-top: 8px; }
 .ldm-admin-add-row input { border: 1px solid var(--hairline); padding: 9px 12px; border-radius: 2px; font-size: 12.5px; flex: 1; }
 .ldm-admin-cats { display: flex; flex-direction: column; gap: 16px; }
-.ldm-admin-cat-block { border: 1px solid var(--hairline); border-radius: 3px; padding: 14px 16px; }
+.ldm-admin-cat-block { border: 1px solid var(--hairline); border-radius: 8px; padding: 16px 18px; background: var(--surface); }
 .ldm-admin-cat-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .ldm-admin-cat-head button { color: var(--fg-dim); }
 .ldm-admin-subs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
